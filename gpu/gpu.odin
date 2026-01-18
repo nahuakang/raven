@@ -1044,8 +1044,10 @@ validate :: proc(cond: bool, msg: string = "", loc := #caller_location, expr := 
             buf: [1024]u8
             offs := 0
             offs += copy(buf[offs:], expr)
-            offs += copy(buf[offs:], " : ")
-            offs += copy(buf[offs:], msg)
+            if msg != "" {
+                offs += copy(buf[offs:], " : ")
+                offs += copy(buf[offs:], msg)
+            }
 
             p("GPU Validation Failed", message = string(buf[:offs]), loc = loc)
         }
@@ -1128,8 +1130,6 @@ validate_pipeline_desc :: proc(desc: Pipeline_Desc, loc := #caller_location) {
     if depth_params_set {
         validate(desc.depth_format != .Invalid)
     }
-
-
 
     num_colors := 0
     for col in desc.color_format {

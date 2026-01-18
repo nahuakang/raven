@@ -1,18 +1,33 @@
+struct Global_Constants {
+    time        : f32;
+    delta_time  : f32;
+    frame       : u32;
+    resolution  : vec2<i32>;
+    rand_seed   : u32;
+    param0      : u32;
+    param1      : u32;
+    param2      : u32;
+    param3      : u32;
+};
+
 struct Batch_Constants {
     instance_offset : u32,
     vertex_offset   : u32,
 };
-
-@group(0) @binding(8)
-var<uniform> batch_constants : Batch_Constants;
 
 struct Layer_Constants {
     view_proj : mat4x4<f32>,
     cam_pos   : vec3<f32>,
 };
 
+@group(0) @binding(8)
+var<uniform> rv_global : Global_Constants;
+
 @group(0) @binding(9)
 var<uniform> layer_constants : Layer_Constants;
+
+@group(0) @binding(10)
+var<uniform> batch_constants : Batch_Constants;
 
 struct Vertex {
     pos    : vec3<f32>,

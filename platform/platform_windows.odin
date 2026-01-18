@@ -228,7 +228,7 @@ when BACKEND == BACKEND_WINDOWS {
         wstr := windows.utf8_to_wstring_buf(buf[:], path)
         result.hmod = windows.LoadLibraryW(wstr)
         if result.hmod == nil {
-            // _win32_log_last_error("LoadLibraryW")
+            _win32_log_last_error("LoadLibraryW")
             return {}, false
         }
         return result, true
@@ -632,8 +632,13 @@ when BACKEND == BACKEND_WINDOWS {
         return transmute(u64)last_write, true // note: uniform scale across OSes?
     }
 
-    _delete_file :: proc(path: string) -> bool {
-        return bool(windows.DeleteFileW(windows.utf8_to_wstring_alloc(path, context.temp_allocator)))
+    _delete_file :: proc(path: string) -> (result: bool) {
+        windows.SetLastError(0)
+        result = bool(windows.DeleteFileW(windows.utf8_to_wstring_alloc(path, context.temp_allocator)))
+        if !result {
+            _win32_log_last_error("DeleteFileW")
+        }
+        return result
     }
 
     @(require_results)
@@ -1717,7 +1722,11 @@ when BACKEND == BACKEND_WINDOWS {
 
             defer windows.LocalFree(rawptr(msg_buf))
 
-            log.error(text, ":", windows.wstring_to_utf8_alloc(msg_buf, int(num_msg_chars), context.temp_allocator), location = loc)
+            str, _ := windows.wstring_to_utf8_alloc(msg_buf, int(num_msg_chars), context.temp_allocator)
+            if str[len(str)-1] == '\n' {
+                str = str[:len(str)-1]
+            }
+            log.error(text, ":", str, location = loc)
         }
     }
 

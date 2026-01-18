@@ -1006,6 +1006,8 @@ when BACKEND == BACKEND_D3D11 {
             assert(depth.kind == .Texture2D)
             assert(depth.dsv != nil)
 
+            dsv = depth.dsv
+
             switch desc.depth.clear_mode {
             case .Keep:
             case .Clear:

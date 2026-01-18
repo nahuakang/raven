@@ -65,6 +65,8 @@ MAX_TEXTURE_POOL_SLICES :: 64
 
 MAX_BIND_STATE_DEPTH :: 64
 
+MAX_TOTAL_DRAW_BATCHES :: 1024
+
 // This is the actual swapchain used for rendering directly to screen.
 DEFAULT_RENDER_TEXTURE :: Render_Texture_Handle{MAX_RENDER_TEXTURES - 1, 0}
 
@@ -160,16 +162,18 @@ State :: struct {
     default_vs:             Vertex_Shader_Handle,
     default_ps:             Pixel_Shader_Handle,
 
-    draw_batch_consts:      gpu.Resource_Handle,
     sprite_inst_buf:        gpu.Resource_Handle,
     mesh_inst_buf:          gpu.Resource_Handle,
     quad_ibuf:              gpu.Resource_Handle,
+
+    global_consts:          gpu.Resource_Handle,
+    draw_layers_consts:     gpu.Resource_Handle,
+    draw_batch_consts:      gpu.Resource_Handle,
 
     watched_dirs_num:       i32,
     watched_dirs:           [MAX_WATCHED_DIRS]Watched_Dir,
 
     draw_layers:            [MAX_DRAW_LAYERS]Draw_Layer,
-    draw_layers_consts:     gpu.Resource_Handle,
 
     groups_used:            bit_set[0..<MAX_GROUPS],
     groups_gen:             [MAX_GROUPS]Handle_Gen,
@@ -368,32 +372,53 @@ Bind_Texture_Mode :: enum u8 {
     Render_Texture,
 }
 
-
-// NOTE: the dynamic arrays must be allocated with temp_allocator.
-// Beware of the default append() behavior.
 Draw_Layer :: struct {
     camera:             Camera,
     flags:              bit_set[Draw_Layer_Flag],
 
-    sprite_offs:        u32,
+    sprite_insts_base:  u32,
     mesh_offs:          u32,
 
     last_sprites_len:   i32,
     last_meshes_len:    i32,
 
+    // NOTE: the dynamic arrays must be allocated with temp_allocator.
+    // Beware of the default append() behavior.
+
     sprites:            #soa[dynamic]Sprite_Draw,
     meshes:             #soa[dynamic]Mesh_Draw,
     triangles:          #soa[dynamic]Triangle_Draw,
+
+    sprite_batches:     [dynamic]Draw_Batch,
+    mesh_batches:       [dynamic]Draw_Batch,
+    triangle_batches:   [dynamic]Draw_Batch,
 }
 
 Draw_Layer_Flag :: enum u8 {
+    // Disable frustum culling.
     No_Cull,
+    // Disable all sorting.
+    // NOTE: this doesn't affect just transparent objects, it's how batching optimization is done.
     No_Sort,
 }
 
-Draw_Layer_Constants :: struct #all_or_none {
-    view_proj:  Mat4,
-    cam_pos:    Vec3,
+// Shared across all layers and everything.
+Draw_Global_Constants :: struct #all_or_none #align(16) {
+    time:           f32,
+    delta_time:     f32,
+    frame:          u32,
+    resolution:     [2]i32,
+    rand_seed:      u32,
+    param0:         u32,
+    param1:         u32,
+    param2:         u32,
+    param3:         u32,
+}
+
+Draw_Layer_Constants :: struct #all_or_none #align(16) {
+    view_proj:      Mat4,
+    cam_pos:        Vec3,
+    layer_index:    i32,
 }
 
 #assert(size_of(Draw_Batch_Constants) == 16)
@@ -409,25 +434,35 @@ Render_Texture :: struct #all_or_none {
     depth:  gpu.Resource_Handle,
 }
 
+// (CPU) Draw instance data
+
 Sprite_Draw :: struct #all_or_none {
-    key:    Sprite_Sort_Key,
+    key:    Draw_Sort_Key,
     inst:   Sprite_Inst,
 }
 
-// NOTE: no sprite vertex shader.
-// Top bits are higher priority when sorting.
-Sprite_Sort_Key :: bit_field u64 {
-    dist:           u16 | 14,
-    fill:           Fill_Mode  | 2,
-    depth_write:    bool | 1,
-    depth_test:     bool | 1,
-    blend:          Blend_Mode | 2,
-    texture_mode:   Bind_Texture_Mode | 2,
-    texture:        u8 | 8,
-    ps:             u8 | 6,
+Mesh_Draw :: struct #all_or_none {
+    key:    Draw_Sort_Key,
+    inst:   Mesh_Inst,
+    extra:  struct {
+        index:  u16,
+    },
 }
 
-// GPU Data
+Triangle_Draw :: struct #all_or_none {
+    key:    Draw_Sort_Key,
+    offs:   u32,
+}
+
+// CPU Data for a single draw call.
+Draw_Batch :: struct #all_or_none {
+    key:    Draw_Sort_Key,
+    offset: u32,
+    num:    u16,
+}
+
+// GPU Instance data
+
 Sprite_Inst :: struct #all_or_none {
     pos:        [3]f32,
     color:      [4]u8,
@@ -437,35 +472,6 @@ Sprite_Inst :: struct #all_or_none {
     uv_min_y:   f32,
     uv_size:    [2]f32,
     tex_slice:  u8,
-}
-
-Mesh_Draw :: struct #all_or_none {
-    key:    Mesh_Sort_Key,
-    inst:   Mesh_Inst,
-    extra:  Mesh_Draw_Extra,
-}
-
-Mesh_Draw_Extra :: struct #all_or_none {
-    index:  u16,
-}
-
-#assert(MAX_TEXTURES <= 256)
-#assert(MAX_SHADERS <= 64)
-#assert(MAX_GROUPS <= 64)
-
-// NOTE: we *could* probably shrink sort dist to 8 bits
-Mesh_Sort_Key :: bit_field u64 {
-    dist:           u16 | 16,
-    index_num:      u16 | 16,
-    blend:          Blend_Mode | 2,
-    fill:           Fill_Mode | 2,
-    depth_write:    bool | 1,
-    depth_test:     bool | 1,
-    group:          u8 | 6,
-    ps:             u8 | 5,
-    vs:             u8 | 5,
-    texture:        u8 | 8,
-    texture_mode:   Bind_Texture_Mode | 2,
 }
 
 Mesh_Inst :: struct #all_or_none {
@@ -480,20 +486,34 @@ Mesh_Inst :: struct #all_or_none {
     param:      u32, // user param
 }
 
-Triangle_Sort_Key :: bit_field u64 {
-    dist:           u16 | 16,
-    blend:          Blend_Mode | 2,
+#assert(MAX_TEXTURES <= 256)
+#assert(MAX_SHADERS <= 64)
+#assert(MAX_GROUPS <= 64)
+
+DRAW_SORT_DIST_BITS :: 14
+MAX_DRAW_SORT_KEY_DIST :: (1 << DRAW_SORT_DIST_BITS) - 1
+
+// NOTE: the sort distance could be packed in fewer bits.
+Draw_Sort_Key :: bit_field u64 {
+    index_num:      u16 | DRAW_SORT_DIST_BITS,
     fill:           Fill_Mode | 2,
     depth_write:    bool | 1,
     depth_test:     bool | 1,
+    texture:        u8 | 8,
+    texture_mode:   Bind_Texture_Mode | 2,
+    group:          u8 | 6,
     ps:             u8 | 6,
     vs:             u8 | 6,
-    texture:        u8 | 6,
+    dist:           u16 | 16,
+    blend:          Blend_Mode | 2,
 }
 
-Triangle_Draw :: struct #all_or_none {
-    key:    Triangle_Sort_Key,
-    offs:   u32,
+draw_sort_key_equal :: proc(key_a, key_b: Draw_Sort_Key) -> bool {
+    a := key_a
+    b := key_b
+    a.dist = 0
+    b.dist = 0
+    return a == b
 }
 
 DEFAULT_SAMPLERS :: [2]gpu.Sampler_Desc{
@@ -509,7 +529,11 @@ DEFAULT_SAMPLERS :: [2]gpu.Sampler_Desc{
     // },
 }
 
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // MARK: Base
+//
 
 set_state_ptr :: proc(state: ^State) {
     _state = state
@@ -623,9 +647,19 @@ init_ex :: proc(state: ^State, window: platform.Window, allocator: runtime.Alloc
         usage = .Dynamic,
     ) or_else panic("gpu")
 
-    _state.draw_batch_consts = gpu.create_constants("rv-draw-batch-consts", size_of(Draw_Batch_Constants)) or_else panic("gpu")
+    _state.global_consts = gpu.create_constants("rv-global-consts",
+        size_of(Draw_Global_Constants),
+    ) or_else panic("gpu")
 
-    _state.draw_layers_consts = gpu.create_constants("rv-layer-consts", size_of(Draw_Layer_Constants), MAX_DRAW_LAYERS) or_else panic("gpu")
+    _state.draw_batch_consts = gpu.create_constants("rv-batch-consts",
+        size_of(Draw_Batch_Constants),
+        MAX_TOTAL_DRAW_BATCHES,
+    ) or_else panic("gpu")
+
+    _state.draw_layers_consts = gpu.create_constants("rv-layer-consts",
+        size_of(Draw_Layer_Constants),
+        MAX_DRAW_LAYERS,
+    ) or_else panic("gpu")
 
     quad_indices := [6]u16{
         0, 1, 2,
@@ -679,7 +713,7 @@ init_ex :: proc(state: ^State, window: platform.Window, allocator: runtime.Alloc
         INCL :: #load("data/raven.wgsl", string)
 
         default_sprite_vs = transmute([]byte)(INCL + #load("data/default_sprite.vs.wgsl", string))
-        // default_vs = transmute([]byte)(INCL + #load("data/default.vs.wgsl", string))
+        default_vs = transmute([]byte)(INCL + #load("data/default.vs.wgsl", string))
         default_ps = transmute([]byte)(INCL + #load("data/default.ps.wgsl", string))
 
     case:
@@ -687,7 +721,7 @@ init_ex :: proc(state: ^State, window: platform.Window, allocator: runtime.Alloc
     }
 
     _state.default_sprite_vs = create_vertex_shader("default_sprite", default_sprite_vs) or_else panic("Failed to load default sprite vertex shader")
-    // _state.default_vs = create_vertex_shader("default", default_vs) or_else panic("Failed to load default vertex shader")
+    _state.default_vs = create_vertex_shader("default", default_vs) or_else panic("Failed to load default vertex shader")
     _state.default_ps = create_pixel_shader("default", default_ps) or_else panic("Failed to load default pixel shader")
 
     log.info("Raven initialized successfully")
@@ -841,7 +875,10 @@ new_frame :: proc(present_frame := true, vsync := true) -> (keep_running: bool) 
     }
 
     _state.bind_states_len = 0
-    _state.bind_state = {}
+    _state.bind_state = {
+        pixel_shader = int_cast(u8, _state.default_ps.index),
+        vertex_shader = int_cast(u8, _state.default_vs.index),
+    }
 
     bind_pixel_shader_by_handle({})
     bind_vertex_shader_by_handle({})
@@ -858,6 +895,9 @@ _clear_draw_layers :: proc() {
         layer.last_meshes_len = i32(len(layer.meshes))
         layer.sprites = {}
         layer.meshes = {}
+        layer.sprite_batches = {}
+        layer.mesh_batches = {}
+        layer.triangle_batches = {}
     }
 }
 
@@ -877,7 +917,7 @@ default_context :: proc "contextless" () -> (result: runtime.Context) {
 
 // Frame's delta time
 @(require_results)
-get_frame_time :: proc() -> f32 {
+get_delta_time :: proc() -> f32 {
     return f32(f64(_state.frame_dur_ns) * 1e-9)
 }
 
@@ -1766,9 +1806,6 @@ _table_get :: proc(table: ^[$N]$T, table_gen: [N]Handle_Gen, handle: $H/Handle) 
 
 
 
-
-
-
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // MARK: Group
 //
@@ -2590,16 +2627,15 @@ set_layer_params :: proc(
 
 // TODO
 Sprite_Scaling :: enum u8 {
-    Default = 0,
+    Pixel = 0,
     Absolute,
 }
 
-// NOTE: sprites ignore vertex shader bindings.
 // TODO: anchor
 // TODO: angle
 // TODO: sprite_ex
 // TODO: scaling by pixels or absolute
-// TODO: draw line
+// TODO: draw sprite line
 draw_sprite :: proc(
     pos:    Vec3,
     rect:   Rect = {0, 1},
@@ -2643,13 +2679,18 @@ draw_sprite :: proc(
             0, draw_layer.last_sprites_len, context.temp_allocator)
     }
 
-    key := Sprite_Sort_Key{
-        texture     = _state.bind_state.texture,
-        ps          = _state.bind_state.pixel_shader,
-        blend       = _state.bind_state.blend,
-        fill        = _state.bind_state.fill,
-        depth_test  = _state.bind_state.depth_test,
-        depth_write = _state.bind_state.depth_write,
+    key := Draw_Sort_Key{
+        texture         = _state.bind_state.texture,
+        texture_mode    = _state.bind_state.texture_mode,
+        ps              = _state.bind_state.pixel_shader,
+        vs              = u8(_state.default_sprite_vs.index), // for now the VS is fixed
+        blend           = _state.bind_state.blend,
+        fill            = _state.bind_state.fill,
+        depth_test      = _state.bind_state.depth_test,
+        depth_write     = _state.bind_state.depth_write,
+        index_num       = 0,
+        group           = 0,
+        dist            = 0,
     }
 
     append_soa_elem(&draw_layer.sprites, Sprite_Draw{
@@ -2832,18 +2873,25 @@ draw_line :: proc() {
 draw_triangle :: proc() {}
 
 
-// MARK: GPU Draw
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// MARK: GPU Drawing
+//
 
-// This takes all the draw_* command data and uploads them to GPU buffers.
-// Call render_gpu_layer(...) to actually draw.
-// NOTE: until the start of the next frame, all draw_* commands after this call will be ignored.
-@(optimization_mode="favor_size")
-upload_gpu_layers :: proc() {
-    assert(!_state.uploaded_gpu_draws)
-    _state.uploaded_gpu_draws = true
+_upload_gpu_global_constants :: proc() {
+    gpu.update_constants(_state.global_consts, gpu.ptr_bytes(&Draw_Global_Constants{
+        time = get_time(),
+        delta_time = get_delta_time(),
+        frame = u32(get_frame_index()),
+        resolution = _state.screen_size,
+        rand_seed = 0,
+        param0 = 0,
+        param1 = 0,
+        param2 = 0,
+        param3 = 0,
+    }))
+}
 
-    // TODO: split this up, it could be useful to let the user call parts of this manually.
-
+_upload_gpu_layer_constants :: proc() {
     consts_buf: [MAX_DRAW_LAYERS]Draw_Layer_Constants
 
     for &layer, i in _state.draw_layers {
@@ -2854,6 +2902,7 @@ upload_gpu_layers :: proc() {
         const_data: Draw_Layer_Constants = {
             view_proj = calc_camera_world_to_clip_matrix(layer.camera),
             cam_pos = layer.camera.pos,
+            layer_index = i32(i),
         }
 
         consts_buf[i] = const_data
@@ -2861,7 +2910,19 @@ upload_gpu_layers :: proc() {
     }
 
     gpu.update_constants(_state.draw_layers_consts, gpu.ptr_bytes(&consts_buf))
+}
 
+// This takes all the draw_* command data and uploads them to GPU buffers.
+// Call render_gpu_layer(...) to actually draw.
+// NOTE: until the start of the next frame, all draw_* commands after this call will be ignored.
+@(optimization_mode="favor_size")
+upload_gpu_layers :: proc() {
+    assert(!_state.uploaded_gpu_draws)
+    _state.uploaded_gpu_draws = true
+
+    _upload_gpu_global_constants()
+
+    _upload_gpu_layer_constants()
 
     // Prepare sprites
 
@@ -2891,8 +2952,10 @@ upload_gpu_layers :: proc() {
                     linalg.abs(inst.mat_x) +
                     linalg.abs(inst.mat_y)
 
-                dist := linalg.dot(forw, inst.pos - layer.camera.pos)
-                key.dist = ~u16(dist * sprite_dist_factor)
+                if key.blend != .Opaque {
+                    dist := linalg.dot(forw, inst.pos - layer.camera.pos)
+                    key.dist = ~u16(dist * sprite_dist_factor)
+                }
 
                 if !is_box_in_frustum(frustum, inst.pos, bounds_rad) {
                     unordered_remove_soa(&layer.sprites, sprite_index)
@@ -2905,7 +2968,7 @@ upload_gpu_layers :: proc() {
         if .No_Sort not_in layer.flags {
             keys := layer.sprites.key[:len(layer.sprites)]
 
-            #assert(size_of(u64) == size_of(Sprite_Sort_Key))
+            #assert(size_of(u64) == size_of(Draw_Sort_Key))
             indices := slice.sort_with_indices(transmute([]u64)keys, context.temp_allocator)
             slice.sort_from_permutation_indices(instances, indices)
         }
@@ -2932,18 +2995,75 @@ upload_gpu_layers :: proc() {
         uploaded_bytes := copy_slice(sprite_upload_buf[sprite_upload_offs:], gpu.slice_bytes(instances))
         total_bytes := size_of(Sprite_Inst) * len(layer.sprites)
 
+        layer.sprite_insts_base = u32(sprite_upload_offs) / size_of(Sprite_Inst)
+
         if uploaded_bytes != total_bytes {
             log.error("Failed to upload all sprite instances")
             footer := raw_soa_footer_dynamic_array(&layer.sprites)
             footer.len = uploaded_bytes / size_of(Sprite_Inst)
-        } else {
-            layer.sprite_offs = u32(sprite_upload_offs)
-            sprite_upload_offs += total_bytes
+        }
+        sprite_upload_offs += uploaded_bytes
+    }
+
+    gpu.update_buffer(_state.sprite_inst_buf, sprite_upload_buf)
+
+
+    instance_num: u32 = 0
+    instance_offs: u32 = 0
+
+    // Generate sprite draw call lists
+
+    sprite_batch_consts: [MAX_TOTAL_DRAW_BATCHES]Draw_Batch_Constants
+    sprite_batch_consts_num := 0
+
+    for &layer, _ in _state.draw_layers {
+        if len(layer.sprites) == 0 {
+            continue
+        }
+
+        assert(layer.sprite_batches == nil)
+        layer.sprite_batches = make([dynamic]Draw_Batch, 0, 256, context.temp_allocator)
+
+        curr_key := layer.sprites[0].key
+
+        last := len(layer.sprites) - 1
+
+        instance_num = 0
+        instance_offs = 0
+
+        for i := 1; i <= last; i += 1 {
+            layer_key := layer.sprites.key[i]
+
+            instance_num += 1
+
+            if draw_sort_key_equal(curr_key, layer_key) && i != last {
+                continue
+            }
+
+            append(&layer.sprite_batches, Draw_Batch{
+                key = curr_key,
+                offset = u32(sprite_batch_consts_num),
+                num = int_cast(u16, instance_num),
+            })
+
+            sprite_batch_consts[sprite_batch_consts_num] = {
+                vertex_offset = 0,
+                instance_offset = layer.sprite_insts_base + instance_offs,
+            }
+            sprite_batch_consts_num += 1
+
+            curr_key = layer_key
+            instance_offs += instance_num
+            instance_num = 0
         }
     }
 
+    gpu.update_constants(
+        _state.draw_batch_consts,
+        gpu.slice_bytes(sprite_batch_consts[:sprite_batch_consts_num]),
+    )
 
-    gpu.update_buffer(_state.sprite_inst_buf, sprite_upload_buf)
+    // Update draw call constant buffers
 
 
     //
@@ -3038,6 +3158,7 @@ render_gpu_layer :: proc(
     }
 
     if len(layer.sprites) == 0 && len(layer.meshes) == 0 {
+        log.warn("Trying to submit an empty layer")
         return
     }
 
@@ -3070,8 +3191,9 @@ render_gpu_layer :: proc(
         },
         depth_format = .D_F32,
         constants = {
-            0 = _state.draw_batch_consts,
+            0 = _state.global_consts,
             1 = _state.draw_layers_consts,
+            2 = _state.draw_batch_consts,
         },
     }
 
@@ -3084,115 +3206,169 @@ render_gpu_layer :: proc(
     // Sprites
     //
 
-    instance_num: i32 = 0
-    instance_offs: i32 = 0
-
-    if len(layer.sprites) > 0 {
-
-        pip_desc.index = {
-            resource = _state.quad_ibuf,
-            format = .U16,
-        }
-
-        pip_desc.topo = .Triangles
-
-        pip_desc.cull = .None
-        pip_desc.fill = .Invalid
-
-        pip_desc.vs = _state.vertex_shaders[_state.default_sprite_vs.index].shader
-
-        pip_desc.resources = {
-            0 = _state.sprite_inst_buf,
-        }
-
-        prev_key: Sprite_Sort_Key = {}
-
-        for i in 0..=len(layer.sprites) {
-            flush: bool
-            key: Sprite_Sort_Key
-
-            // End
-            if i == len(layer.sprites) {
-                flush = true
-                key = prev_key
-            } else {
-                key = layer.sprites.key[i]
-
-                cmp_curr := key
-                cmp_prev := prev_key
-                cmp_curr.dist = 0
-                cmp_prev.dist = 0
-
-                flush = i > 0 && cmp_curr != cmp_prev
-            }
-
-            // Flush the draw commands BEFORE this one
-            if flush {
-                log_internal("Sprite Drawcall with %i instances at offset %i", instance_num, instance_offs)
-
-                pipeline, pipeline_ok := gpu.create_pipeline("sprite-pip", pip_desc)
-                if !pipeline_ok {
-                    panic("Failed to create GPU pipeline")
-                }
-
-                gpu.begin_pipeline(pipeline)
-
-                // consts := Draw_Batch_Constants{
-                //     instance_offset = layer.sprite_offs + u32(instance_offs),
-                //     vertex_offset = 0,
-                // }
-
-                // // THIS SHIT WONT WORK ON WEBGPU
-                // // Emulate push constants??
-                // gpu.update_constants(_state.draw_batch_consts, gpu.ptr_bytes(&consts))
-
-                gpu.draw_indexed(
-                    index_num = 6,
-                    instance_num = instance_num,
-                    index_offset = 0,
-                    const_offsets = {
-                        0 = 0,
-                        1 = u32(index),
-                    },
-                )
-
-                instance_offs += instance_num
-                instance_num = 0
-            }
-
-            if i == len(layer.sprites) {
-                break
-            }
-
-            instance_num += 1
-
-            if i == 0 || flush {
-                pip_desc.blends[0] = _gpu_blend_mode_desc(key.blend)
-                pip_desc.cull, pip_desc.fill = _gpu_fill_mode(key.fill)
-                pip_desc.depth_comparison = key.depth_test ? .Greater_Equal : .Always
-                pip_desc.depth_write = key.depth_write
-
-                if key.texture != prev_key.texture {
-                    res: gpu.Resource_Handle
-
-                    if key.texture == 0 {
-                        // res = _state.texture_pool.resource
-                    } else {
-                        res = _state.textures[key.texture].resource
-                    }
-
-                    pip_desc.resources[2] = res
-                }
-
-                if key.ps != prev_key.ps {
-                    assert(key.ps != 0)
-                    pip_desc.ps = _state.pixel_shaders[key.ps].shader
-                }
-            }
-
-            prev_key = key
-        }
+    pip_desc.index = {
+        resource = _state.quad_ibuf,
+        format = .U16,
     }
+
+    pip_desc.topo = .Triangles
+
+    pip_desc.resources = {
+        0 = _state.sprite_inst_buf,
+    }
+
+    for batch in layer.sprite_batches {
+        log.info(batch)
+
+        log_internal("Sprite batch drawcall with %i instances", batch.num)
+
+        pip_desc.blends[0] = _gpu_blend_mode_desc(batch.key.blend)
+        pip_desc.cull, pip_desc.fill = _gpu_fill_mode(batch.key.fill)
+        pip_desc.depth_comparison = batch.key.depth_test ? .Greater_Equal : .Always
+        pip_desc.depth_write = batch.key.depth_write
+        pip_desc.ps = _state.pixel_shaders[batch.key.ps].shader
+        pip_desc.vs = _state.vertex_shaders[batch.key.vs].shader
+
+        tex_res: gpu.Resource_Handle
+        switch batch.key.texture_mode {
+        case .Non_Pooled:       tex_res = _state.textures[batch.key.texture].resource
+        case .Pooled:           tex_res = _state.texture_pools[batch.key.texture].resource
+        case .Render_Texture:   tex_res = _state.render_textures[batch.key.texture].color
+        }
+
+        assert(tex_res != {})
+        pip_desc.resources[2] = tex_res
+
+        pipeline, pipeline_ok := gpu.create_pipeline("sprite-pip", pip_desc)
+        if !pipeline_ok {
+            log.error("Failed to create GPU pipeline")
+            continue
+        }
+
+        gpu.begin_pipeline(pipeline)
+
+        gpu.draw_indexed(
+            index_num = 6,
+            instance_num = batch.num,
+            index_offset = 0,
+            const_offsets = {
+                0 = max(u32),
+                1 = u32(index),
+                2 = batch.offset,
+            },
+        )
+    }
+
+
+    // instance_num: i32 = 0
+    // instance_offs: i32 = 0
+
+    // if len(layer.sprites) > 0 {
+
+    //     pip_desc.index = {
+    //         resource = _state.quad_ibuf,
+    //         format = .U16,
+    //     }
+
+    //     pip_desc.topo = .Triangles
+
+    //     pip_desc.cull = .None
+    //     pip_desc.fill = .Invalid
+
+    //     pip_desc.vs = _state.vertex_shaders[_state.default_sprite_vs.index].shader
+
+    //     pip_desc.resources = {
+    //         0 = _state.sprite_inst_buf,
+    //     }
+
+    //     prev_key: Draw_Sort_Key = {}
+
+    //     for i in 0..=len(layer.sprites) {
+    //         flush: bool
+    //         key: Draw_Sort_Key
+
+    //         // End
+    //         if i == len(layer.sprites) {
+    //             flush = true
+    //             key = prev_key
+    //         } else {
+    //             key = layer.sprites.key[i]
+
+    //             cmp_curr := key
+    //             cmp_prev := prev_key
+    //             cmp_curr.dist = 0
+    //             cmp_prev.dist = 0
+
+    //             flush = i > 0 && cmp_curr != cmp_prev
+    //         }
+
+    //         // Flush the draw commands BEFORE this one
+    //         if flush {
+    //             log_internal("Sprite Drawcall with %i instances at offset %i", instance_num, instance_offs)
+
+    //             pipeline, pipeline_ok := gpu.create_pipeline("sprite-pip", pip_desc)
+    //             if !pipeline_ok {
+    //                 panic("Failed to create GPU pipeline")
+    //             }
+
+    //             gpu.begin_pipeline(pipeline)
+
+    //             // consts := Draw_Batch_Constants{
+    //             //     instance_offset = layer.sprite_batch_base + u32(instance_offs),
+    //             //     vertex_offset = 0,
+    //             // }
+
+    //             // // THIS SHIT WONT WORK ON WEBGPU
+    //             // // Emulate push constants??
+    //             // gpu.update_constants(_state.draw_batch_consts, gpu.ptr_bytes(&consts))
+
+    //             gpu.draw_indexed(
+    //                 index_num = 6,
+    //                 instance_num = instance_num,
+    //                 index_offset = 0,
+    //                 const_offsets = {
+    //                     0 = 0,
+    //                     1 = u32(index),
+    //                 },
+    //             )
+
+    //             instance_offs += instance_num
+    //             instance_num = 0
+    //         }
+
+    //         if i == len(layer.sprites) {
+    //             break
+    //         }
+
+    //         instance_num += 1
+
+    //         if i == 0 || flush {
+    //             pip_desc.blends[0] = _gpu_blend_mode_desc(key.blend)
+    //             pip_desc.cull, pip_desc.fill = _gpu_fill_mode(key.fill)
+    //             pip_desc.depth_comparison = key.depth_test ? .Greater_Equal : .Always
+    //             pip_desc.depth_write = key.depth_write
+
+    //             if key.texture != prev_key.texture {
+    //                 res: gpu.Resource_Handle
+
+    //                 if key.texture == 0 {
+    //                     // res = _state.texture_pool.resource
+    //                 } else {
+    //                     res = _state.textures[key.texture].resource
+    //                 }
+
+    //                 pip_desc.resources[2] = res
+    //             }
+
+    //             if key.ps != prev_key.ps {
+    //                 assert(key.ps != 0)
+    //                 pip_desc.ps = _state.pixel_shaders[key.ps].shader
+    //             }
+    //         }
+
+    //         prev_key = key
+    //     }
+    // }
 
 
     //
@@ -3557,6 +3733,8 @@ _assertion_failure_proc :: proc(prefix, message: string, loc: runtime.Source_Cod
 
     runtime.print_caller_location(loc)
     runtime.print_string(" ")
+    runtime.print_string(loc.procedure)
+    runtime.print_string(": ")
     runtime.print_string(prefix)
     if len(message) > 0 {
         runtime.print_string(": ")
@@ -3566,9 +3744,10 @@ _assertion_failure_proc :: proc(prefix, message: string, loc: runtime.Source_Cod
 
     when ODIN_DEBUG {
         ctx := &_state.debug_trace_ctx
-        if !debug_trace.in_resolve(ctx) {
+        if _state != nil && !debug_trace.in_resolve(ctx) {
             buf: [64]debug_trace.Frame
             runtime.print_string("Debug Stack Trace:\n")
+
             frames := debug_trace.frames(ctx, skip = 0, frames_buffer = buf[:])
             for f, i in frames {
                 fl := debug_trace.resolve(ctx, f, context.temp_allocator)
@@ -3583,6 +3762,8 @@ _assertion_failure_proc :: proc(prefix, message: string, loc: runtime.Source_Cod
                 runtime.print_byte('\n')
             }
         }
+    } else {
+        runtime.print_string("    compile with -debug to show stack trace")
     }
 
     runtime.trap()
@@ -3593,7 +3774,7 @@ _assertion_failure_proc :: proc(prefix, message: string, loc: runtime.Source_Cod
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Counters
 //
-// This is a super lightweight way to measure stats and report them to the outside world.
+// A lightweight way to measure stats and report them to the outside world.
 //
 
 // Counter_Kind :: enum u8 {
@@ -3602,6 +3783,8 @@ _assertion_failure_proc :: proc(prefix, message: string, loc: runtime.Source_Cod
 //     Total_Draw_Layer_Ns,
 //     Sprite_Draw_Calls,
 //     Mesh_Draw_Calls,
+//     Culled_Meshes,
+//     Culled_Sprites,
 // }
 
 // counter_add :: proc()
@@ -3646,21 +3829,6 @@ rect_clamp_point :: proc(r: Rect, p: Vec2) -> Vec2 {
     return {clamp(p.x, r.min.x, r.max.x), clamp(p.y, r.min.y, r.max.y)}
 }
 
-rect_closest_point :: rect_clamp_point
-
-
-// limit to maximum half size
-rect_max_size :: proc(r: Rect, amount: Vec2) -> Rect {
-    size := rect_full_size(r) * 0.5
-    return rect_from_box(rect_center(r), Vec2{min(size.x, amount.x), min(size.y, amount.y)})
-}
-
-// limit to minimum half size
-rect_min_size :: proc(r: Rect, amount: Vec2) -> Rect {
-    size := rect_full_size(r) * 0.5
-    return rect_from_box(rect_center(r), Vec2{max(size.x, amount.x), max(size.y, amount.y)})
-}
-
 rect_cut_left :: proc(r: ^Rect, a: f32) -> Rect {
     minx := r.min.x
     r.min.x = min(r.max.x, r.min.x + a)
@@ -3683,22 +3851,6 @@ rect_cut_bottom :: proc(r: ^Rect, a: f32) -> Rect {
     maxy := r.max.y
     r.max.y = max(r.min.y, r.max.y - a)
     return {{r.min.x, r.max.y}, {r.max.x, maxy}}
-}
-
-rect_get_cut_left :: proc(r: Rect, a: f32) -> Rect {
-    return {{r.min.x, r.min.y}, {min(r.max.x, r.min.x + a), r.max.y}}
-}
-
-rect_get_cut_right :: proc(r: Rect, a: f32) -> Rect {
-    return {{max(r.min.x, r.max.x - a), r.min.y}, {r.max.x, r.max.y}}
-}
-
-rect_get_cut_top :: proc(r: Rect, a: f32) -> Rect {
-    return {{r.min.x, r.min.y}, {r.max.x, min(r.max.y, r.min.y + a)}}
-}
-
-rect_get_cut_bottom :: proc(r: Rect, a: f32) -> Rect {
-    return {{r.min.x, max(r.min.y, r.max.y - a)}, {r.max.x, r.max.y}}
 }
 
 rect_split_left :: proc(r: ^Rect, t: f32) -> Rect {

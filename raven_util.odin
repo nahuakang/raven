@@ -22,7 +22,7 @@ ORANGE      :: Vec4{1, 0.5, 0, 1}
 PURPLE      :: Vec4{0.5, 0, 1, 1}
 
 @(require_results)
-deg :: proc "contextless" (degrees: f32) -> f32 {
+deg :: #force_inline proc "contextless" (degrees: f32) -> f32 {
     return degrees * math.RAD_PER_DEG
 }
 
@@ -75,6 +75,12 @@ vcast :: proc "contextless" ($T: typeid, v: [$N]$E) -> (result: [N]T)
         result[i] = cast(T)elem
     }
     return result
+}
+
+@(require_results)
+int_cast :: proc($Dst: typeid, v: $Src) -> Dst where intrinsics.type_is_integer(Dst) && intrinsics.type_is_integer(Src) {
+    assert(v == Src(Dst(v)), "Safe integer cast failed")
+    return cast(Dst)v
 }
 
 // Counter-clockwise. Negate to do clockwise.

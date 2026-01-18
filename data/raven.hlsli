@@ -1,11 +1,24 @@
-cbuffer batch_constants : register(b0) {
-    uint instance_offset;
-    uint vertex_offset;
+cbuffer global_constants : register(b0) {
+    float rv_global_time;
+    float rv_global_delta_time;
+    uint  rv_global_frame;
+    int2  rv_global_resolution;
+    uint  rv_global_rand_seed;
+    uint  rv_global_param0;
+    uint  rv_global_param1;
+    uint  rv_global_param2;
+    uint  rv_global_param3;
 }
 
 cbuffer layer_constants : register(b1) {
     float4x4 view_proj;
     float3 cam_pos;
+    int layer_index;
+}
+
+cbuffer batch_constants : register(b2) {
+    uint instance_offset;
+    uint vertex_offset;
 }
 
 struct Vertex {

@@ -11,8 +11,6 @@ import "core:log"
 import "base:runtime"
 import "../platform"
 
-ODIN_EXE :: #config(ODIN_EXE, "odin")
-
 when ODIN_OS == .Windows {
     DLL_EXT :: ".dll"
 } else when ODIN_OS == .Darwin {
@@ -20,8 +18,6 @@ when ODIN_OS == .Windows {
 } else {
     DLL_EXT :: ".so"
 }
-
-BUILD_DIR :: "build"
 
 Hotreload_Module :: struct {
     mod:            platform.Module,
@@ -31,32 +27,6 @@ Hotreload_Module :: struct {
 Hotreload_File :: struct {
     path:       string,
     index:      int,
-}
-
-Flags :: struct {
-    pkg:    string `args:"pos=0,required" usage:"The Odin package name to run/build"`,
-    build:  bool `usage:"Only build, don't run"`,
-}
-
-main :: proc() {
-    context.logger = log.create_console_logger(allocator = context.allocator)
-
-    args := platform.get_commandline_args(context.allocator)
-
-    fl: Flags
-    flags.parse_or_exit(&fl, args, allocator = context.allocator)
-
-    pkg_name := fl.pkg[find_last_slash(fl.pkg)+1:]
-
-    if fl.build {
-        latest, _ := hotreload_find_latest_dll(fl.pkg)
-        compile_hot(fl.pkg, pkg_name = pkg_name, index = latest.index + 1)
-    } else {
-        clean_hot(pkg_name)
-        compile_hot(fl.pkg, pkg_name = pkg_name, index = 0)
-        hotreload_run(pkg_name)
-        clean_hot(pkg_name)
-    }
 }
 
 exec :: proc(str: string) {
@@ -90,8 +60,11 @@ clean_hot :: proc(pkg: string) {
 }
 
 remove_all :: proc(pattern: string) {
+    log.infof("Removing all '%s'", pattern)
+
     iter: platform.Directory_Iter
     for path in platform.iter_directory(&iter, pattern, context.temp_allocator) {
+        log.infof("removing '%s'", path)
         platform.delete_file(path)
     }
 }
@@ -133,15 +106,12 @@ hotreload_find_latest_dll :: proc(pkg_name: string) -> (result: Hotreload_File, 
     return result, ok
 }
 
-hotreload_run :: proc(pkg: string) {
-
-    log.info("Hot", pkg)
-
+hotreload_run :: proc(pkg: string, pkg_path: string) -> bool {
     initial, initial_ok := hotreload_find_latest_dll(pkg)
 
     if !initial_ok {
         fmt.println("Hotreload Error: Couldn't find inital DLL for package:", pkg)
-        return
+        return false
     }
 
     fmt.printfln("Hotreload: Loading initial module %s ...", initial.path)
@@ -150,7 +120,7 @@ hotreload_run :: proc(pkg: string) {
 
     if !module_ok {
         fmt.println("Hotreload Error: Failed to load initial DLL")
-        return
+        return false
     }
 
     modules_to_unload: [dynamic]platform.Module
@@ -160,11 +130,36 @@ hotreload_run :: proc(pkg: string) {
 
     prev_data: rawptr
 
+    watcher: platform.File_Watcher
+    platform.init_file_watcher(&watcher, pkg_path)
+
+    any_changes := false
+
     for {
         prev_data = module.callback(prev_data)
 
         if prev_data == nil {
             break
+        }
+
+        prev_any_changes := any_changes
+
+        changes := platform.watch_file_changes(&watcher)
+        for change in changes {
+            log.info("Hotreload: file changed:", change)
+            if strings.ends_with(change, ".odin") {
+                any_changes = true
+            }
+        }
+
+        if prev_any_changes && any_changes {
+            any_changes = false
+
+            // EXPERIMENTAL
+            // Sometimes fails with:
+            // Syntax Error: Failed to parse file: something.odin; invalid file or cannot be found
+            // log.info("HOTRELOADAUTO RECOMPILING")
+            // compile_hot(pkg_path, pkg, curr_index + 1)
         }
 
         new_file, new_ok := hotreload_find_latest_dll(pkg)
@@ -195,6 +190,8 @@ hotreload_run :: proc(pkg: string) {
     for lib, i in modules_to_unload {
         platform.unload_module(lib)
     }
+
+    return true
 }
 
 load_hotreload_module :: proc(path: string) -> (result: Hotreload_Module, ok: bool) {
