@@ -207,7 +207,7 @@ when BACKEND == BACKEND_D3D11 {
         enable := true
 
         depth_stencil_desc := d3d.DEPTH_STENCIL_DESC{
-            DepthEnable         = false, // d3d.BOOL(_depth_enable(comparison, write)),
+            DepthEnable         = d3d.BOOL(_depth_enable(comparison, write)),
             DepthWriteMask      = _d3d11_depth_write(write),
             DepthFunc           = _d3d11_comparison(comparison),
             StencilEnable       = false,
@@ -1065,7 +1065,7 @@ when BACKEND == BACKEND_D3D11 {
             _set_topology(curr.topo)
         }
 
-        if curr.index != prev.index {
+        if curr.index != prev.index && curr.index.format != .Invalid {
             res, res_ok := get_internal_resource(curr.index.resource)
             assert(res_ok)
             assert(res.kind == .Index_Buffer)

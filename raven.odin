@@ -19,6 +19,7 @@ import "gpu"
 import "platform"
 import "rscn"
 import "audio"
+import "ufmt"
 
 // BEFORE RELEASE
 // TODO: Immediate-mode draw mesh
@@ -183,6 +184,8 @@ State :: struct #align(64) {
     global_consts:          gpu.Resource_Handle,
     draw_layers_consts:     gpu.Resource_Handle,
     draw_batch_consts:      gpu.Resource_Handle,
+
+    counters:               [Counter_Kind]Counter_State,
 
     watched_dirs_num:       i32,
     watched_dirs:           [MAX_WATCHED_DIRS]Watched_Dir,
@@ -388,26 +391,26 @@ Bind_Texture_Mode :: enum u8 {
 }
 
 Draw_Layer :: struct {
-    camera:             Camera,
-    flags:              bit_set[Draw_Layer_Flag],
+    camera:                 Camera,
+    flags:                  bit_set[Draw_Layer_Flag],
 
-    sprite_insts_base:  u32,
-    mesh_offs:          u32,
+    sprite_insts_base:      u32,
+    triangle_insts_base:    u32,
 
-    last_sprites_len:   i32,
-    last_meshes_len:    i32,
-    last_triangles_len: i32,
+    last_sprites_len:       i32,
+    last_meshes_len:        i32,
+    last_triangles_len:     i32,
 
     // NOTE: the dynamic arrays must be allocated with temp_allocator.
     // Beware of the default append() behavior.
 
-    sprites:            #soa[dynamic]Sprite_Draw,
-    meshes:             #soa[dynamic]Mesh_Draw,
-    triangles:          #soa[dynamic]Triangle_Draw,
+    sprites:                #soa[dynamic]Sprite_Draw,
+    meshes:                 #soa[dynamic]Mesh_Draw,
+    triangles:              #soa[dynamic]Triangle_Draw,
 
-    sprite_batches:     [dynamic]Draw_Batch,
-    mesh_batches:       [dynamic]Draw_Batch,
-    triangle_batches:   [dynamic]Draw_Batch,
+    sprite_batches:         [dynamic]Draw_Batch,
+    mesh_batches:           [dynamic]Draw_Batch,
+    triangle_batches:       [dynamic]Draw_Batch,
 }
 
 Draw_Layer_Flag :: enum u8 {
@@ -809,6 +812,11 @@ init_state :: proc(allocator := context.allocator) {
     audio.init(&_state.audio_state)
 
     debug_trace.init(&_state.debug_trace_ctx)
+
+    for &counter in _state.counters {
+        counter.total_min = max(u64)
+        counter.accum = max(u64)
+    }
 }
 
 // No-op if already initialized.
@@ -908,7 +916,7 @@ _finish_init :: proc() {
         #load("data/error.png"),
     ) or_else panic("Failed to load error texture")
 
-    _ = create_texture_from_encoded_data(
+    _state.default_font_texture = create_texture_from_encoded_data(
         "thick",
         #load("data/CGA8x8thick.png"),
     ) or_else panic("Failed to load default font texture")
@@ -999,6 +1007,13 @@ shutdown_state :: proc() {
         fmt.printfln("Total peak memory: {0:M} ({0} bytes) ", tr.peak_memory_allocated + size_of(State))
     }
 
+    {
+        fmt.printfln("CPU Frame time (milliseconds):")
+        c := _state.counters[.CPU_Frame_Ns]
+        fmt.printfln("\tMin, Max: %.3f, %.3f", f64(c.total_min) * 1e-6, f64(c.total_max) * 1e-6)
+        fmt.printfln("\tAverage:  %.3f", f64(c.total_sum) * 1e-6 / f64(c.total_num))
+    }
+
     free(_state, _state.allocator)
 
     _state = nil
@@ -1035,6 +1050,10 @@ begin_frame :: proc() -> (keep_running: bool) {
 
     assert(_state.render_textures[DEFAULT_RENDER_TEXTURE.index].color != {})
 
+    for &counter in _state.counters {
+        _counter_flush(&counter)
+    }
+
     gpu_can_begin_frame := gpu.begin_frame()
     assert(gpu_can_begin_frame)
 
@@ -1050,6 +1069,12 @@ begin_frame :: proc() -> (keep_running: bool) {
     _state.frame_dur_ns = time_ns - _state.last_time
 
     _state.last_time = time_ns
+
+    if _state.frame_index > 10 && _state.frame_dur_ns > 1e6 {
+        _counter_add(.CPU_Frame_Ns, _state.frame_dur_ns)
+    } else {
+        _counter_add(.CPU_Frame_Ns, max(u64))
+    }
 
     _clear_draw_layers()
 
@@ -1273,52 +1298,6 @@ get_screen_size :: proc() -> [2]f32 {
 @(require_results)
 get_viewport :: proc() -> [3]f32 {
     return {f32(_state.screen_size.x), f32(_state.screen_size.y), 1.0}
-}
-
-@(require_results)
-make_3d_perspective_camera :: proc(pos: Vec3, rot: Quat, fov: f32) -> Camera {
-    return {
-        pos = pos,
-        rot = rot,
-        projection = perspective_projection(
-            get_screen_size(),
-            fov = clamp(fov, 0.0001, math.PI * 0.95),
-        ),
-    }
-}
-
-@(require_results)
-make_2d_camera :: proc(center: Vec3 = 0, fov: f32 = 1.0, angle: f32 = 0) -> Camera {
-    screen := get_screen_size()
-    return {
-        pos = center,
-        rot = linalg.quaternion_angle_axis_f32(angle, {0, 0, 1}),
-        projection = orthographic_projection(
-            left  = -fov * screen.x * 0.5,
-            right = fov * screen.x * 0.5,
-            top = fov * screen.y * 0.5,
-            bottom = -fov * screen.y * 0.5,
-            near = 1,
-            far = 0,
-        ),
-    }
-}
-
-@(require_results)
-make_screen_camera :: proc(offset: Vec3 = 0) -> Camera {
-    screen := get_screen_size()
-    return {
-        pos = offset,
-        rot = 1,
-        projection = orthographic_projection(
-            left = 0,
-            right = screen.x,
-            top = screen.y,
-            bottom = 0,
-            near = 1,
-            far = 0,
-        ),
-    }
 }
 
 
@@ -2372,6 +2351,8 @@ decode_texture_data :: proc(data: []byte) -> (result: Texture_Data, ok: bool) {
     size: [2]i32
     channels: i32
 
+    // stbi.set_flip_vertically_on_load(true)
+
     data := stbi.load_from_memory(
         buffer = raw_data(data),
         len = i32(len(data)),
@@ -2453,7 +2434,7 @@ create_pixel_shader :: proc(name: string, data: []byte) -> (result: Pixel_Shader
 // TODO: flag to keep/flush the file data.
 // TODO: flag to only register the file.
 // TODO: file blacklist?
-load_asset_directory :: proc(path: string, watch := true) {
+load_asset_directory :: proc(path: string, watch := false) {
     iter: platform.Directory_Iter
 
     if !platform.is_directory(path) {
@@ -2927,6 +2908,8 @@ draw_sprite :: proc(
 
     draw: Sprite_Draw
 
+    // TODO: flip texture *data* instead of flipping sprites?
+
     draw.inst = Sprite_Inst{
         pos = pos,
         mat_x = mat[0] * scale.x * +0.5 * f32(_state.bind_state.texture_size.x) * rect_size.x,
@@ -3169,15 +3152,16 @@ draw_triangle :: proc(
     draw: Triangle_Draw
 
     draw.key = {
-        index_num   = 0,
-        group       = 0,
-        texture     = _state.bind_state.texture,
-        ps          = _state.bind_state.pixel_shader,
-        vs          = _state.bind_state.vertex_shader,
-        fill        = _state.bind_state.fill,
-        blend       = _state.bind_state.blend,
-        depth_test  = _state.bind_state.depth_test,
-        depth_write = _state.bind_state.depth_write,
+        index_num       = 0,
+        group           = 0,
+        texture         = _state.bind_state.texture,
+        texture_mode    = _state.bind_state.texture_mode,
+        ps              = _state.bind_state.pixel_shader,
+        vs              = _state.bind_state.vertex_shader,
+        fill            = _state.bind_state.fill,
+        blend           = _state.bind_state.blend,
+        depth_test      = _state.bind_state.depth_test,
+        depth_write     = _state.bind_state.depth_write,
     }
 
     norm, norm_ok := normals.?
@@ -3297,6 +3281,15 @@ upload_gpu_layers :: proc() {
 
     _upload_gpu_layer_constants()
 
+
+    Batcher_State :: struct {
+        consts:         [MAX_TOTAL_DRAW_BATCHES]Draw_Batch_Constants,
+        consts_num:     u32
+    }
+
+    batcher: Batcher_State
+
+
     // Prepare sprites
 
     total_sprite_instances := 0
@@ -3380,19 +3373,15 @@ upload_gpu_layers :: proc() {
 
     // Generate sprite draw call lists
 
-    Batcher_State :: struct {
-        consts:         [MAX_TOTAL_DRAW_BATCHES]Draw_Batch_Constants,
-        consts_num:     u32
-    }
-
-    batcher: Batcher_State
-
     for &layer, _ in _state.draw_layers {
         _batcher_generate_draws(&batcher,
             &layer.sprite_batches,
             layer.sprites.key[:len(layer.sprites)],
             layer.sprite_insts_base,
         )
+        if len(layer.sprites) > 0 {
+            assert(len(layer.sprite_batches) > 0)
+        }
     }
 
 
@@ -3400,6 +3389,8 @@ upload_gpu_layers :: proc() {
     //
     // Upload meshes
     //
+
+    total_mesh_instances := 1 // index 0 is dummy instance
 
     for &layer, _ in _state.draw_layers {
         if len(layer.meshes) == 0 {
@@ -3445,15 +3436,95 @@ upload_gpu_layers :: proc() {
             indices := slice.sort_with_indices(transmute([]u64)keys, context.temp_allocator)
             slice.sort_from_permutation_indices(instances, indices)
         }
+
+        total_mesh_instances += len(layer.meshes)
+    }
+
+    mesh_upload_buf := slice.reinterpret([]Mesh_Inst,
+        runtime.mem_alloc_non_zeroed(size_of(Mesh_Inst) * total_mesh_instances, alignment = 256, allocator = context.temp_allocator) or_else panic("Mesh Buf"),
+    )
+    mesh_upload_offs := 0
+
+    mesh_upload_offs += 1
+    mesh_upload_buf[0] = Mesh_Inst{
+        pos         = {0, 0, 0},
+        mat_x       = {1, 0, 0},
+        mat_y       = {0, 1, 0},
+        mat_z       = {0, 0, 1},
+        col         = 255,
+        vert_offs   = 0,
+        tex_slice   = 0, // OOPS
+        _pad0       = 0,
+        param       = 0,
     }
 
 
 
-    //
-    // Upload meshes
-    //
+    gpu.update_buffer(
+        _state.mesh_inst_buf,
+        gpu.slice_bytes(mesh_upload_buf[:mesh_upload_offs]),
+    )
 
 
+    //
+    // Upload triangles
+    //
+
+    total_triangle_instances := 0
+
+    for &layer, _ in _state.draw_layers {
+        if len(layer.triangles) == 0 {
+            continue
+        }
+
+        total_triangle_instances += len(layer.triangles)
+    }
+
+
+    triangle_upload_buf, triangle_upload_err := runtime.mem_alloc_non_zeroed(size_of([3]Mesh_Vertex) * total_sprite_instances, alignment = 256, allocator = context.temp_allocator)
+    triangle_upload_offs := 0
+
+    assert(triangle_upload_err == nil)
+
+    for &layer in _state.draw_layers {
+        if len(layer.triangles) == 0 {
+            continue
+        }
+
+        assert(triangle_upload_offs < len(triangle_upload_buf))
+
+        data := layer.triangles.verts[:len(layer.triangles)]
+
+        uploaded_bytes := copy_slice(triangle_upload_buf[triangle_upload_offs:], gpu.slice_bytes(data))
+        total_bytes := size_of([3]Mesh_Vertex) * len(layer.triangles)
+
+        layer.triangle_insts_base = u32(triangle_upload_offs) / size_of([3]Mesh_Vertex)
+
+        if uploaded_bytes != total_bytes {
+            log.error("Failed to upload all triangles")
+            footer := raw_soa_footer_dynamic_array(&layer.triangles)
+            footer.len = uploaded_bytes / size_of([3]Mesh_Vertex)
+        }
+        triangle_upload_offs += uploaded_bytes
+    }
+
+    gpu.update_buffer(_state.triangle_vbuf, triangle_upload_buf)
+
+    // Generate triangle draws
+
+    for &layer, _ in _state.draw_layers {
+        _batcher_generate_triangle_draws(&batcher,
+            &layer.triangle_batches,
+            layer.triangles.key[:len(layer.triangles)],
+            layer.triangle_insts_base,
+        )
+        if len(layer.triangles) > 0 {
+            assert(len(layer.triangle_batches) > 0)
+        }
+    }
+
+
+    // Upload actual batch consts for all draws
 
     gpu.update_constants(
         _state.draw_batch_consts,
@@ -3477,19 +3548,24 @@ upload_gpu_layers :: proc() {
 
         curr_key := keys[0]
 
-        last := len(keys) - 1
+        last := len(keys)
 
         instance_num: u32 = 0
         instance_offs: u32 = 0
 
         for i := 1; i <= last; i += 1 {
-            layer_key := keys[i]
-
             instance_num += 1
 
-            if draw_sort_key_equal(curr_key, layer_key) && i != last {
-                continue
+            layer_key: Draw_Sort_Key
+            if i != last {
+                layer_key = keys[i]
+
+                if draw_sort_key_equal(curr_key, layer_key) {
+                    continue
+                }
             }
+
+            // log.infof("Batch %i/%i: offs=%i, len=%i", i, last + 1, instance_offs, instance_num)
 
             append(dst_batches, Draw_Batch{
                 key = curr_key,
@@ -3503,9 +3579,61 @@ upload_gpu_layers :: proc() {
             }
             batcher.consts_num += 1
 
-            curr_key = layer_key
             instance_offs += instance_num
             instance_num = 0
+            curr_key = layer_key
+        }
+    }
+
+
+    // TODO: somehow refactor?
+    _batcher_generate_triangle_draws :: proc(
+        batcher:        ^Batcher_State,
+        dst_batches:    ^[dynamic]Draw_Batch,
+        keys:           []Draw_Sort_Key,
+        inst_offs_base: u32,
+    ) {
+        if len(keys) == 0 {
+            return
+        }
+
+        assert(dst_batches^ == nil)
+        dst_batches^ = make([dynamic]Draw_Batch, 0, 256, context.temp_allocator)
+
+        curr_key := keys[0]
+
+        last := len(keys)
+
+        instance_num: u32 = 0
+        instance_offs: u32 = 0
+
+        for i := 1; i <= last; i += 1 {
+            instance_num += 1
+
+            layer_key: Draw_Sort_Key
+            if i != last {
+                layer_key = keys[i]
+
+                if draw_sort_key_equal(curr_key, layer_key) {
+                    continue
+                }
+            }
+
+            append(dst_batches, Draw_Batch{
+                key = curr_key,
+                offset = u32(batcher.consts_num),
+                num = int_cast(u16, instance_num),
+            })
+
+            batcher.consts[batcher.consts_num] = {
+                vertex_offset = inst_offs_base + instance_offs,
+                instance_offset = 0,
+            }
+            batcher.consts_num += 1
+
+            instance_offs += instance_num
+            instance_num = 0
+            curr_key = layer_key
         }
     }
 }
@@ -3529,11 +3657,6 @@ render_gpu_layer :: proc(
     ren_tex, ren_tex_ok := get_internal_render_texture(ren_tex_handle)
     if !ren_tex_ok {
         log.error("Trying to submit GPU commands of an invalid render texture:", ren_tex_handle)
-        return
-    }
-
-    if len(layer.sprites) == 0 && len(layer.meshes) == 0 {
-        log.warn("Trying to submit an empty layer")
         return
     }
 
@@ -3604,6 +3727,8 @@ render_gpu_layer :: proc(
 
         gpu.begin_pipeline(pipeline)
 
+        _counter_add(.Num_Draw_Calls, 1)
+
         gpu.draw_indexed(
             index_num = 6,
             instance_num = batch.num,
@@ -3644,6 +3769,8 @@ render_gpu_layer :: proc(
 
         gpu.begin_pipeline(pipeline)
 
+        _counter_add(.Num_Draw_Calls, 1)
+
         gpu.draw_indexed(
             index_num = 6,
             instance_num = batch.num,
@@ -3667,10 +3794,11 @@ render_gpu_layer :: proc(
 
     pip_desc.index = {}
     pip_desc.resources = {
-        0 = _state.triangle_vbuf,
+        0 = _state.mesh_inst_buf, // Only uses dummy 0 index
+        1 = _state.triangle_vbuf,
     }
 
-    for batch in layer.mesh_batches {
+    for batch in layer.triangle_batches {
         _set_pipeline_desc_apply_key(&pip_desc, batch.key)
 
         pipeline, pipeline_ok := gpu.create_pipeline("tri-pip", pip_desc)
@@ -3681,10 +3809,11 @@ render_gpu_layer :: proc(
 
         gpu.begin_pipeline(pipeline)
 
-        gpu.draw_indexed(
-            index_num = 6,
-            instance_num = batch.num,
-            index_offset = 0,
+        _counter_add(.Num_Draw_Calls, 1)
+
+        gpu.draw_non_indexed(
+            vertex_num = batch.num * 3,
+            instance_num = 1,
             const_offsets = {
                 0 = max(u32),
                 1 = u32(index),
@@ -3696,7 +3825,7 @@ render_gpu_layer :: proc(
 
     return
 
-    _set_pipeline_desc_apply_key :: proc(pip_desc: ^gpu.Pipeline_Desc, key: Draw_Sort_Key) {
+    _set_pipeline_desc_apply_key :: proc(pip_desc: ^gpu.Pipeline_Desc, key: Draw_Sort_Key, loc := #caller_location) {
         pip_desc.blends[0] = _gpu_blend_mode_desc(key.blend)
         pip_desc.cull, pip_desc.fill = _gpu_fill_mode(key.fill)
         pip_desc.depth_comparison = key.depth_test ? .Greater_Equal : .Always
@@ -3709,9 +3838,10 @@ render_gpu_layer :: proc(
         case .Non_Pooled:       tex_res = _state.textures[key.texture].resource
         case .Pooled:           tex_res = _state.texture_pools[key.texture].resource
         case .Render_Texture:   tex_res = _state.render_textures[key.texture].color
+        case: panic("Invalid texture mode")
         }
 
-        assert(tex_res != {})
+        assert(tex_res != {}, loc = loc)
         pip_desc.resources[2] = tex_res
     }
 }
@@ -4003,101 +4133,84 @@ _assertion_failure_proc :: proc(prefix, message: string, loc: runtime.Source_Cod
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Counters
+// MARK: Counters
 //
 // A lightweight way to measure stats and report them to the outside world.
 //
 
-// Counter_Kind :: enum u8 {
-//     Invalid,
-//     Upload_Ns,
-//     Total_Draw_Layer_Ns,
-//     Sprite_Draw_Calls,
-//     Mesh_Draw_Calls,
-//     Culled_Meshes,
-//     Culled_Sprites,
-// }
+COUNTER_HISTORY :: 64
 
-// counter_add :: proc()
-
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Rect
-//
-
-rect_center :: proc(r: Rect) -> Vec2 {
-    return (r.min + r.max) * 0.5
+Counter_State :: struct {
+    accum:      u64,
+    vals:       [COUNTER_HISTORY]u64,
+    total_num:  u64,
+    total_min:  u64,
+    total_max:  u64,
+    total_sum:  u64,
 }
 
-rect_from_box :: proc(pos: Vec2, half_size: Vec2) -> Rect {
-    return {pos - half_size, pos + half_size}
+Counter_Kind :: enum u8 {
+    CPU_Frame_Ns,
+    // TODO: GPU_Frame_Ns
+    // Upload_Ns,
+    // Total_Draw_Layer_Ns,
+    Num_Draw_Calls,
+    Num_Total_Instanced,
+    Num_Non_Culled_Instanced,
 }
 
-rect_anchor :: proc(r: Rect, anchor: Vec2) -> Vec2 {
-    return {lerp(r.min.x, r.max.x, anchor.x), lerp(r.min.y, r.max.y, anchor.y)}
+_counter_add :: proc(kind: Counter_Kind, value: u64) {
+    _state.counters[kind].accum = intrinsics.saturating_add(_state.counters[kind].accum, value)
 }
 
-rect_full_size :: #force_inline proc(r: Rect) -> Vec2 {
-    return r.max - r.min
+_counter_flush :: proc(counter: ^Counter_State) {
+    value := counter.accum
+    counter.accum = 0
+    if value == max(u64) {
+        return
+    }
+    counter.total_num += 1
+    counter.vals[counter.total_num % COUNTER_HISTORY] = value
+    counter.total_min = min(counter.total_min, value)
+    counter.total_max = max(counter.total_max, value)
+    counter.total_sum += value
 }
 
-rect_expand :: proc(r: Rect, a: Vec2) -> Rect {
-    return {r.min - a, r.max + a}
-}
+// Assumes screenspace camera.
+draw_counter :: proc(kind: Counter_Kind, pos: Vec3, scale: f32 = 1, unit: f32 = 1, col: Vec4 = 1) {
+    scope_binds()
+    bind_texture_by_handle(_state.default_font_texture)
+    bind_blend(.Alpha)
+    bind_depth_test(true)
+    bind_depth_write(true)
 
-rect_scale :: proc(r: Rect, a: Vec2) -> Rect {
-    size := rect_full_size(r) * 0.5
-    center := rect_center(r)
-    return {center - size * a, center + size * a}
-}
+    max_val: u64
 
-rect_contains_point :: proc(r: Rect, p: Vec2) -> bool {
-    return p.x > r.min.x && p.y > r.min.y && p.x < r.max.x && p.y < r.max.y
-}
+    counter := _state.counters[kind]
+    for i in 0..<COUNTER_HISTORY {
+        val := counter.vals[(int(counter.total_num) - i) %% COUNTER_HISTORY]
 
-rect_clamp_point :: proc(r: Rect, p: Vec2) -> Vec2 {
-    return {clamp(p.x, r.min.x, r.max.x), clamp(p.y, r.min.y, r.max.y)}
-}
+        height: f32 = scale * unit * f32(val)
 
-rect_cut_left :: proc(r: ^Rect, a: f32) -> Rect {
-    minx := r.min.x
-    r.min.x = min(r.max.x, r.min.x + a)
-    return {{minx, r.min.y}, {r.min.x, r.max.y}}
-}
+        draw_sprite(
+            pos = pos + {COUNTER_HISTORY - f32(i), height * 0.5, 0},
+            rect = {0, 1.0 / 128.0},
+            scale = {2, height},
+            col = col,
+        )
 
-rect_cut_right :: proc(r: ^Rect, a: f32) -> Rect {
-    maxx := r.max.x
-    r.max.x = max(r.min.x, r.max.x - a)
-    return {{r.max.x, r.min.y}, {maxx, r.max.y}}
-}
+        max_val = max(val, max_val)
+    }
 
-rect_cut_top :: proc(r: ^Rect, a: f32) -> Rect {
-    miny := r.min.y
-    r.min.y = min(r.max.y, r.min.y + a)
-    return {{r.min.x, miny}, {r.max.x, r.min.y}}
-}
-
-rect_cut_bottom :: proc(r: ^Rect, a: f32) -> Rect {
-    maxy := r.max.y
-    r.max.y = max(r.min.y, r.max.y - a)
-    return {{r.min.x, r.max.y}, {r.max.x, maxy}}
-}
-
-rect_split_left :: proc(r: ^Rect, t: f32) -> Rect {
-    return rect_cut_left(r, (r.max.x - r.min.x) * t)
-}
-
-rect_split_right :: proc(r: ^Rect, t: f32) -> Rect {
-    return rect_cut_right(r, (r.max.x - r.min.x) * t)
-}
-
-rect_split_top :: proc(r: ^Rect, t: f32) -> Rect {
-    return rect_cut_top(r, (r.max.y - r.min.y) * t)
-}
-
-rect_split_bottom :: proc(r: ^Rect, t: f32) -> Rect {
-    return rect_cut_bottom(r, (r.max.y - r.min.y) * t)
+    // last := counter.vals[counter.total_num % COUNTER_HISTORY]
+    text: string
+    if unit == 1 {
+        text = ufmt.tprintf("%i", max_val)
+    } else {
+        text = ufmt.tprintf("%f", f64(max_val) * f64(unit))
+    }
+    // draw_text(, pos + {64 + 12, 0, 0}, col = col)
+    draw_text(text, pos + {64 + 12, 4, 0}, col = col)
 }
 
 

@@ -1,28 +1,25 @@
 package raven_example_hello
 
-import "core:terminal/ansi"
-import "core:reflect"
 import "base:runtime"
-import "core:log"
-import "core:math"
-import "core:fmt"
 import rv "../.."
-import "../../gpu"
-import "../../platform"
-import "../../audio"
-import "../../ufmt"
 
 state: ^State
 
 State :: struct {
-    num:    i32,
+    // Commonly you would store ALL your game data here.
+    // Everything has to be within this struct to allow for hotreloading, otherwise the data would get lost.
+    data: u32,
 }
 
+// The main procedure is your app's entry point.
+// But to support multiple platforms, Raven handles the frame update loop, only calling your module.
 main :: proc() {
-    fmt.println("Hello")
     rv.run_main_loop(_module_api())
 }
 
+// Module_API structure let's Raven know which procedures to call to init, update frame etc.
+// The '@export' qualifier makes sure it's visible when running in hot-reload mode.
+// The state_size is there for error checking.
 @export _module_api :: proc "contextless" () -> (result: rv.Module_API) {
     runtime.print_string("MODULE API\n")
     result = {
@@ -35,7 +32,6 @@ main :: proc() {
 }
 
 _init :: proc() -> ^State {
-    log.info("Init")
     state = new(State)
 
     rv.init_window("Raven Hello Example")
@@ -44,89 +40,30 @@ _init :: proc() -> ^State {
 }
 
 _shutdown :: proc(prev_state: ^State) {
-    log.info("Shutdown")
-
-    state = prev_state
-
-    free(state)
+    free(prev_state)
 }
 
 _update :: proc(prev_state: ^State) -> ^State {
-    // log.info("Update")
-
     state = prev_state
 
     if rv.key_pressed(.Escape) {
         return nil
     }
 
+    // Raven renders into "draw layers".
+    // Layer 0 is the default one, so let's set up a regular screenspace view for it.
     rv.set_layer_params(0, rv.make_screen_camera())
-    rv.set_layer_params(1, rv.make_screen_camera())
 
-    rv.bind_depth_test(true)
-    rv.bind_depth_write(true)
+    // To configure draw state like blending, textures, shaders, current layer, etc, call 'rv.bind_*'
+    // You can also call push_binds/pop_binds to save and restore the bind state.
     rv.bind_texture("thick")
+    rv.draw_text("Hello World!", {100, 100, 0}, scale = 4)
 
-    center := rv.get_viewport() * {0.5, 0.5, 0}
-    for i in 0..<3 {
-        t := f32(i) / 2
-        rv.draw_text("Hello World!",
-            center + {
-                0,
-                math.sin_f32(rv.get_time() - t * 0.5) * 100,
-                f32(i) * 0.1,
-            },
-            anchor = 0.5,
-            spacing = 1,
-            scale = 4,
-            col = i == 0 ? rv.WHITE : rv.BLUE,
-        )
-    }
-
-    rv.bind_layer(1)
-    rv.bind_blend(.Add)
-    rv.draw_text("Hello World!",
-        {100, 100, 0},
-        anchor = 0,
-        spacing = 1,
-        scale = 4,
-        col = rv.RED * rv.fade(0.5),
-    )
-
-    state.num += 1
-
+    // The 'rv.draw_*' commands only record what geometry you want to render each frame.
+    // To actually display it on the screen you must first upload it to the GPU, and then
+    // explicily render each layer into a particular render texture.
     rv.upload_gpu_layers()
-
-    rv.render_gpu_layer(0, rv.DEFAULT_RENDER_TEXTURE,
-        clear_color = rv.Vec3{0, 0, 0.5},
-        clear_depth = true,
-    )
-
-    rv.render_gpu_layer(1, rv.DEFAULT_RENDER_TEXTURE,
-        clear_color = nil,
-        clear_depth = false,
-    )
+    rv.render_gpu_layer(0, rv.DEFAULT_RENDER_TEXTURE, clear_color = rv.Vec3{0, 0, 0.5}, clear_depth = true)
 
     return state
-}
-
-print_member_sizes :: proc($T: typeid) {
-    fmt.printfln("total = %M", size_of(T))
-    for field in reflect.struct_fields_zipped(T) {
-        col := ansi.RESET
-        factor := f64(field.type.size) / f64(size_of(T))
-        if factor > 0.2 {
-            col = ansi.FG_RED
-        } else if factor > 0.1 {
-            col = ansi.FG_YELLOW
-        } else if factor < 0.01 {
-            col = ansi.FG_GREEN
-        }
-
-        fmt.print(ansi.CSI)
-        fmt.print(col)
-        fmt.print(ansi.SGR)
-        fmt.printfln("  %s = %M (%.1f%%)", field.name, field.type.size, 100 * factor)
-        fmt.print(ansi.CSI + ansi.RESET + ansi.SGR)
-    }
 }

@@ -93,8 +93,8 @@ rot90 :: #force_inline proc "contextless" (v: [2]$T) -> [2]T {
 // Returns value in 0..1 range.
 // Same as remap(t, a, b, 0, 1)
 @(require_results)
-unlerp :: proc "contextless" (a, b: $T, t: f32) -> T {
-    return (t - a) / (b - a)
+unlerp :: proc "contextless" (a, b: f32, x: f32) -> f32 {
+    return (x - a) / (b - a)
 }
 
 // Linearly transform x from range a0..a1 to b0..b1
@@ -166,4 +166,141 @@ heatmap_color :: proc(val: f32) -> (result: Vec4) {
     return result
 }
 
+@(require_results)
+euler_rot :: proc(angles: Vec3) -> Quat {
+    return linalg.quaternion_from_euler_angle_y_f32(angles.x) *
+           linalg.quaternion_from_euler_angle_x_f32(angles.y) *
+           linalg.quaternion_from_euler_angle_z_f32(angles.z)
+}
 
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// MARK: Rect
+//
+
+rect_center :: proc(r: Rect) -> Vec2 {
+    return (r.min + r.max) * 0.5
+}
+
+rect_from_box :: proc(pos: Vec2, half_size: Vec2) -> Rect {
+    return {pos - half_size, pos + half_size}
+}
+
+rect_anchor :: proc(r: Rect, anchor: Vec2) -> Vec2 {
+    return {lerp(r.min.x, r.max.x, anchor.x), lerp(r.min.y, r.max.y, anchor.y)}
+}
+
+rect_full_size :: #force_inline proc(r: Rect) -> Vec2 {
+    return r.max - r.min
+}
+
+rect_expand :: proc(r: Rect, a: Vec2) -> Rect {
+    return {r.min - a, r.max + a}
+}
+
+rect_scale :: proc(r: Rect, a: Vec2) -> Rect {
+    size := rect_full_size(r) * 0.5
+    center := rect_center(r)
+    return {center - size * a, center + size * a}
+}
+
+rect_contains_point :: proc(r: Rect, p: Vec2) -> bool {
+    return p.x > r.min.x && p.y > r.min.y && p.x < r.max.x && p.y < r.max.y
+}
+
+rect_clamp_point :: proc(r: Rect, p: Vec2) -> Vec2 {
+    return {clamp(p.x, r.min.x, r.max.x), clamp(p.y, r.min.y, r.max.y)}
+}
+
+rect_cut_left :: proc(r: ^Rect, a: f32) -> Rect {
+    minx := r.min.x
+    r.min.x = min(r.max.x, r.min.x + a)
+    return {{minx, r.min.y}, {r.min.x, r.max.y}}
+}
+
+rect_cut_right :: proc(r: ^Rect, a: f32) -> Rect {
+    maxx := r.max.x
+    r.max.x = max(r.min.x, r.max.x - a)
+    return {{r.max.x, r.min.y}, {maxx, r.max.y}}
+}
+
+rect_cut_top :: proc(r: ^Rect, a: f32) -> Rect {
+    miny := r.min.y
+    r.min.y = min(r.max.y, r.min.y + a)
+    return {{r.min.x, miny}, {r.max.x, r.min.y}}
+}
+
+rect_cut_bottom :: proc(r: ^Rect, a: f32) -> Rect {
+    maxy := r.max.y
+    r.max.y = max(r.min.y, r.max.y - a)
+    return {{r.min.x, r.max.y}, {r.max.x, maxy}}
+}
+
+rect_split_left :: proc(r: ^Rect, t: f32) -> Rect {
+    return rect_cut_left(r, (r.max.x - r.min.x) * t)
+}
+
+rect_split_right :: proc(r: ^Rect, t: f32) -> Rect {
+    return rect_cut_right(r, (r.max.x - r.min.x) * t)
+}
+
+rect_split_top :: proc(r: ^Rect, t: f32) -> Rect {
+    return rect_cut_top(r, (r.max.y - r.min.y) * t)
+}
+
+rect_split_bottom :: proc(r: ^Rect, t: f32) -> Rect {
+    return rect_cut_bottom(r, (r.max.y - r.min.y) * t)
+}
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// MARK: Camera
+//
+
+@(require_results)
+make_3d_perspective_camera :: proc(pos: Vec3, rot: Quat, fov: f32 = math.PI * 0.5) -> Camera {
+    return {
+        pos = pos,
+        rot = rot,
+        projection = perspective_projection(
+            get_screen_size(),
+            fov = clamp(fov, 0.00001, math.PI * 0.99),
+        ),
+    }
+}
+
+@(require_results)
+make_2d_camera :: proc(center: Vec3 = 0, fov: f32 = 1.0, angle: f32 = 0) -> Camera {
+    screen := get_screen_size()
+    return {
+        pos = center,
+        rot = linalg.quaternion_angle_axis_f32(angle, {0, 0, 1}),
+        projection = orthographic_projection(
+            left  = -fov * screen.x * 0.5,
+            right = fov * screen.x * 0.5,
+            top = fov * screen.y * 0.5,
+            bottom = -fov * screen.y * 0.5,
+            near = 1,
+            far = 0,
+        ),
+    }
+}
+
+@(require_results)
+make_screen_camera :: proc(offset: Vec3 = 0) -> Camera {
+    screen := get_screen_size()
+    return {
+        pos = offset,
+        rot = 1,
+        projection = orthographic_projection(
+            left = 0,
+            right = screen.x,
+            top = screen.y,
+            bottom = 0,
+            near = 1,
+            far = 0,
+        ),
+    }
+}

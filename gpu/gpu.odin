@@ -944,10 +944,13 @@ update_constants :: proc(handle: Resource_Handle, data: []byte) {
     if !res_ok {
         return
     }
+
+    validate(res.kind == .Constants)
     validate(len(data) <= int(res.size.x) * int(res.size.y))
     validate(len(data) % int(res.size.x) == 0)
     validate(res.size.y >= 1)
     validate(res.size.z == 1)
+
     _update_constants(res, data)
 }
 

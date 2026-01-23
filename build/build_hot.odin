@@ -237,9 +237,8 @@ load_hotreload_module :: proc(path: string) -> (result: Hotreload_Module, ok: bo
 
     result.callback = auto_cast(platform.module_symbol_address(module, "_module_hot_step"))
 
-    log.info("Hotreload API: ", result.api)
-
-    log.info("Hotreload callback: ", result.callback)
+    // log.info("Hotreload API: ", result.api)
+    // log.info("Hotreload callback: ", result.callback)
 
     if result.callback == nil {
         return {}, false

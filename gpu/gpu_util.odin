@@ -11,7 +11,7 @@ ptr_bytes :: proc(ptr: ^$T, len := 1) -> []byte {
     return transmute([]byte)runtime.Raw_Slice{ptr, len * size_of(T)}
 }
 
-slice_bytes :: proc(s: []$T) -> []byte {
+slice_bytes :: proc(s: []$T) -> []byte where T != byte {
     return ([^]byte)(raw_data(s))[:len(s) * size_of(T)]
 }
 

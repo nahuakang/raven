@@ -120,6 +120,10 @@ _append_int :: proc(buf: ^[dynamic]byte, value: int) {
         val = -val
     }
 
+    if val == 0 {
+        append_elem(buf, '0')
+    }
+
     temp: [32]u8
     temp_index := len(temp) - 1
     for val != 0 {
@@ -129,7 +133,7 @@ _append_int :: proc(buf: ^[dynamic]byte, value: int) {
         temp_index -= 1
     }
 
-    append_elems(buf, ..cast([]u8)temp[temp_index:])
+    append_elems(buf, ..cast([]u8)temp[temp_index + 1:])
 }
 
 _append_hex :: proc(buf: ^[dynamic]byte, value: u64, size: int) {

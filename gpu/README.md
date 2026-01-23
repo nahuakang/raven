@@ -2,7 +2,7 @@
 
 This is a GPU abstraction layer which can be used independently from all the other Raven packages.
 
-The goal is to have an abstraction layer on a similar level to D3D11, but support more platforms.
+The goal is to expose an API on a level to D3D11, but with support for multiple platforms.
 
 Currently the following APIs are supported:
 - D3D11
