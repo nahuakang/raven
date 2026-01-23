@@ -5,7 +5,10 @@ import "core:math"
 import "core:math/linalg"
 import "base:intrinsics"
 
-// TODO: non ugly colors?
+// TODO: random vector utilities etc
+// TODO: 1d/2d/3d hashing
+
+// TODO: non ugly colors? paletted? more shades?
 WHITE       :: Vec4{1, 1, 1, 1}
 BLACK       :: Vec4{0, 0, 0, 1}
 TRANSPARENT :: Vec4{1, 1, 1, 0}
@@ -22,7 +25,7 @@ ORANGE      :: Vec4{1, 0.5, 0, 1}
 PURPLE      :: Vec4{0.5, 0, 1, 1}
 
 @(require_results)
-deg :: #force_inline proc "contextless" (degrees: f32) -> f32 {
+deg :: #force_inline proc "contextless" (degrees: f32) -> (radians: f32) {
     return degrees * math.RAD_PER_DEG
 }
 

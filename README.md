@@ -71,6 +71,24 @@ All assets are hotreloaded automatically, just pass `watch = true` flag when loa
 
 Code can be hot reloaded by running `odin run build -- run_hot my_package`.
 
+## Web builds
+
+You can run the following command to export your game to web:
+```
+odin run build -- export_web my_package
+```
+
+To run the app locally, you must also create a tiny HTTP file server (to fetch the WASM) due to CORS policy. Something like this works:
+```
+python -m http.server 8000
+```
+And now just enter `localhost:8000` into a browser search bar.
+
+To see the output log, open up the Developer Tools Console (F12 usually).
+
+Please note this is still very early, the JS platform is unfinished and the WebGPU support might run into some issues.
+
+You can also ensure WebGPU is behaving correctly locally with `odin run my_package -define:GPU_BACKEND=WGPU`, however the wgpu-native used on desktop can be slightly different than the Chrome Dawn implementation.
 
 ## Contributing
 For info about bug reports and contributing, see [CONTRIBUTING](CONTRIBUTING.md)

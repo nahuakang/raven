@@ -23,6 +23,7 @@ cbuffer batch_constants : register(b2) {
 
 struct Vertex {
     float3  pos;
+    float   _pad;
     float2  uv;
     uint    normal;
     uint    color;
@@ -42,7 +43,13 @@ struct Sprite_Inst {
 
 struct Mesh_Inst {
     float3 pos;
-    float3x3 mat;
+    float  _pad0;
+    float3 mat_x;
+    float  _pad1;
+    float3 mat_y;
+    float  _pad2;
+    float3 mat_z;
+    float  _pad3;
     uint color;
     uint vert_offs;
     uint tex_slice;

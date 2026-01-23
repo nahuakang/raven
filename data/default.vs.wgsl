@@ -1,5 +1,5 @@
-@group(0) @binding(0) var<storage, read> instances : array<Mesh_Inst>;
-@group(0) @binding(1) var<storage, read> verts     : array<Vertex>;
+@group(0) @binding(16) var<storage, read> instances : array<Mesh_Inst>;
+@group(0) @binding(17) var<storage, read> verts     : array<Vertex>;
 
 @vertex
 fn vs_main(

@@ -335,9 +335,9 @@ Spline :: struct {
 Vertex_Index :: u16 // GPU Vertex Index
 Spline_Vertex :: rscn.Spline_Vertex
 
-#assert(size_of(Mesh_Vertex) == 28)
-Mesh_Vertex :: struct {
+Mesh_Vertex :: struct #align(16) {
     pos:    [3]f32,
+    _pad:   f32,
     uv:     [2]f32,
     normal: [3]u8 `gpu:"normalized"`,
     p0:     u8, // NOTE: this padding could store user parameters..?
@@ -493,9 +493,13 @@ Sprite_Inst :: struct #all_or_none #align(16) {
 
 Mesh_Inst :: struct #all_or_none #align(16) {
     pos:        Vec3,
+    _:          f32,
     mat_x:      Vec3,
+    _:          f32,
     mat_y:      Vec3,
+    _:          f32,
     mat_z:      Vec3,
+    _:          f32,
     col:        [4]u8,
     vert_offs:  u32,
     tex_slice:  u8,
@@ -779,7 +783,7 @@ get_context :: proc "contextless" () -> (result: runtime.Context) {
 
 init_context_state :: proc(ctx: ^Context_State) {
     _state.context_state.logger = {
-        file_handle = ~uintptr(0),
+        file_handle = auto_cast(~uintptr(0)),
         ident = "",
     }
 
@@ -4296,7 +4300,7 @@ draw_counter :: proc(kind: Counter_Kind, pos: Vec3, scale: f32 = 1, unit: f32 = 
 
 @(disabled = !VALIDATION)
 validate_f32 :: #force_inline proc(x: f32, loc := #caller_location) {
-    validate(x == x && (x * 0.5 != x || x == 0), "Value is NaN or Inf")
+    validate(x == x && (x * 0.5 != x || x == 0), "Value is NaN or Inf", loc = loc)
 }
 
 @(disabled=!VALIDATION)
