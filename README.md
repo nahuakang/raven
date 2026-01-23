@@ -35,6 +35,7 @@ Inspired by Raylib, Sokol and PICO8.
 
 ## Simple Example
 
+This is what the per-frame code could look like in a simple hello world app.
 
 ```odin
 rv.set_layer_params(0, rv.make_screen_camera())
