@@ -23,13 +23,12 @@ import "ufmt"
 
 // BEFORE RELEASE
 // TODO: Immediate-mode draw mesh
-// TODO: Immediate-mode draw triangle
 // TODO: Immediate-mode draw line
-// TODO: fix texture pools
-// TODO: actual 3d transform structure
 
 // TODO: go through all TODOs
 
+// TODO: fix triangles and pooled textures
+// TODO: actual 3d transform structure
 // TODO: objects in scene data
 // TODO: asset_load and reload
 // TODO: consistent get_* and no get API!
@@ -2945,7 +2944,7 @@ draw_sprite :: proc(
 
 
 Draw_Text_Iter :: struct {
-
+    // TODO
 }
 
 draw_text_iter :: proc() {
@@ -3126,17 +3125,49 @@ draw_line :: proc(
 
     mid := (a + b) * 0.5
     dir := linalg.normalize(b - a)
-    forw := linalg.normalize0( draw_layer.camera.pos)
+    // TODO: 2d and 3d might need a little different code path?
+    // forw := linalg.normalize0(mid - draw_layer.camera.pos)
+    forw := linalg.quaternion128_mul_vector3(draw_layer.camera.rot, Vec3{0, 0, 1})
+    right := linalg.normalize0(linalg.cross(dir, forw))
+    dist := linalg.distance(a, b)
 
-    unimplemented()
+    draw: Sprite_Draw
 
-    // draw_sprite(
-    //     pos = mid,
-    //     rect = rect,
-    //     scale = {width, linalg.length(a - b) * 0.5},
-    //     col = col,
-    //     rot =
-    // )
+    // TODO: flip texture *data* instead of flipping sprites?
+
+    UV_EPS :: (1.0 / 8192.0)
+
+    draw.inst = Sprite_Inst{
+        pos = mid,
+        mat_x = right * width,
+        mat_y = dir * dist * 0.5,
+        uv_min_x = rect.min.x + UV_EPS,
+        uv_min_y = rect.min.y + UV_EPS,
+        uv_size = rect_full_size(rect) - UV_EPS * 2,
+        color = {
+            u8(clamp(col.r * 255, 0, 255)),
+            u8(clamp(col.g * 255, 0, 255)),
+            u8(clamp(col.b * 255, 0, 255)),
+            u8(clamp(col.a * 255, 0, 255)),
+        },
+        tex_slice = _state.bind_state.texture_slice,
+    }
+
+    draw.key = Draw_Sort_Key{
+        texture         = _state.bind_state.texture,
+        texture_mode    = _state.bind_state.texture_mode,
+        ps              = _state.bind_state.pixel_shader,
+        vs              = u8(_state.default_sprite_vs.index), // for now the VS is fixed
+        blend           = _state.bind_state.blend,
+        fill            = _state.bind_state.fill,
+        depth_test      = _state.bind_state.depth_test,
+        depth_write     = _state.bind_state.depth_write,
+        index_num       = 0,
+        group           = 0,
+        dist            = 0,
+    }
+
+    _push_sprite_draw(_state.bind_state.draw_layer, draw)
 }
 
 draw_triangle :: proc(
@@ -3794,7 +3825,7 @@ render_gpu_layer :: proc(
 
     pip_desc.index = {}
     pip_desc.resources = {
-        0 = _state.mesh_inst_buf, // Only uses dummy 0 index
+        0 = _state.mesh_inst_buf, // Only uses dummy 0 index. HACK: texture layers don't work
         1 = _state.triangle_vbuf,
     }
 

@@ -92,6 +92,8 @@ _update :: proc(prev: ^State) -> ^State {
         col = rv.ORANGE.rgb,
     )
 
+    rv.draw_line(0, {0, math.sin_f32(rv.get_time()) * 5, 10}, 1)
+
     rv.bind_layer(1)
     rv.bind_depth_test(true)
     rv.bind_depth_write(true)

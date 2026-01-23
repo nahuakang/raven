@@ -292,14 +292,14 @@ make_2d_camera :: proc(center: Vec3 = 0, fov: f32 = 1.0, angle: f32 = 0) -> Came
 make_screen_camera :: proc(offset: Vec3 = 0) -> Camera {
     screen := get_screen_size()
     return {
-        pos = offset,
+        pos = offset + {0, 0, -1},
         rot = 1,
         projection = orthographic_projection(
             left = 0,
             right = screen.x,
             top = screen.y,
             bottom = 0,
-            near = 1,
+            near = 2,
             far = 0,
         ),
     }
