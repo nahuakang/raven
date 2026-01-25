@@ -50,6 +50,8 @@ rv.render_gpu_layer(0, rv.DEFAULT_RENDER_TEXTURE,
     clear_color = rv.Vec3{0, 0, 0.5} clear_depth = true)
 ```
 
+To see what the entire full code looks like, check out [examples/hello](examples/hello/hello_example.odin).
+
 ## Prequisities
 Install [Odin](https://github.com/odin-lang/Odin) and make sure it's in your path. Check the [Official Install docs](https://odin-lang.org/docs/install/) for more info.
 

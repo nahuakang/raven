@@ -3711,6 +3711,7 @@ upload_gpu_layers :: proc() {
 
 // NOTE: the instance bind data only use a few of the available sots (consts/resources/blends/etc)
 // We could possibly expose a direct way for the user to control this on per-layer basis.
+// Custom pipeline and pass desc input?
 @(optimization_mode="favor_size")
 render_gpu_layer :: proc(
     #any_int index: i32,
