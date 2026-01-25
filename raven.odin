@@ -1151,9 +1151,9 @@ begin_frame :: proc() -> (keep_running: bool) {
 
         case platform.Event_Mouse:
             _state.input.mouse_delta.x += f32(v.move.x)
-            _state.input.mouse_delta.y += f32(v.move.y)
+            _state.input.mouse_delta.y += f32(-v.move.y)
             _state.input.mouse_pos.x = f32(v.pos.x)
-            _state.input.mouse_pos.y = f32(v.pos.y)
+            _state.input.mouse_pos.y = f32(_state.screen_size.y - v.pos.y)
 
         case platform.Event_Scroll:
             _state.input.scroll_delta += v.amount
@@ -1662,10 +1662,12 @@ Input_Gamepad :: struct {
     buttons_timer:      [Gamepad_Button]f32,
 }
 
+// NOTE: [0, 0] is the bottom left corner.
 mouse_pos :: proc() -> [2]f32 {
     return _state.input.mouse_pos
 }
 
+// Positive Y is up.
 mouse_delta :: proc() -> [2]f32 {
     return _state.input.mouse_delta
 }
@@ -3599,7 +3601,7 @@ upload_gpu_layers :: proc() {
     }
 
 
-    triangle_upload_buf, triangle_upload_err := runtime.mem_alloc_non_zeroed(size_of([3]Mesh_Vertex) * total_sprite_instances, alignment = 256, allocator = context.temp_allocator)
+    triangle_upload_buf, triangle_upload_err := runtime.mem_alloc_non_zeroed(size_of([3]Mesh_Vertex) * total_triangle_instances, alignment = 256, allocator = context.temp_allocator)
     triangle_upload_offs := 0
 
     assert(triangle_upload_err == nil)

@@ -4,6 +4,8 @@ import "core:log"
 import rv "../.."
 import "../../gpu"
 import "core:math/rand"
+import "core:math/linalg"
+import "core:fmt"
 
 state: ^State
 
@@ -54,25 +56,34 @@ _update :: proc(prev_state: ^State) -> ^State {
 
     rv.set_layer_params(0, rv.make_screen_camera())
     rv.bind_texture("thick")
+    rv.bind_blend(.Alpha)
 
     if rv.mouse_down(.Left) {
-        for i in 0..<10 {
+        num := 32
+        vel: f32 = 200
+        if rv.mouse_pressed(.Left) {
+            num *= 10
+            vel *= 2
+        }
+
+        for i in 0..<num {
             p: Particle = {
-                pos = rv.mouse_pos() + 2 * {
+                pos = rv.mouse_pos() + 5 * {
                     rand.float32() * 2.0 - 1.0,
                     rand.float32() * 2.0 - 1.0,
                 },
-                vel = 60 * rv.Vec2{
+                vel = vel * rand.float32() * linalg.normalize0(rv.Vec2{
                     rand.float32() * 2.0 - 1.0,
                     rand.float32() * 2.0 - 1.0,
-                },
-                timer = rand.float32_range(1, 2),
+                }),
+                timer = rand.float32_range(1, 4),
             }
 
             index, index_ok := gpu.bit_pool_find_0(state.pool)
             if index_ok {
                 gpu.bit_pool_set_1(&state.pool, index)
                 state.parts[index] = p
+            } else {
                 log.error("Pool full!")
             }
         }
@@ -85,7 +96,7 @@ _update :: proc(prev_state: ^State) -> ^State {
         }
 
         if p.timer < 0 {
-            gpu.bit_pool_set_0(&state.pool, 1)
+            gpu.bit_pool_set_0(&state.pool, index)
             continue
         }
 
@@ -96,12 +107,17 @@ _update :: proc(prev_state: ^State) -> ^State {
         rv.draw_sprite(
             {p.pos.x, p.pos.y, 0.5},
             rv.font_slot('+'),
+            col = rv.fade(rv.smoothstep(0, 1, p.timer)),
         )
     }
 
     for i in 0..<64 {
         block_full := (state.pool.l0[0] & (1 << uint(i))) != 0
         block := state.pool.l1[i]
+
+        if block_full {
+            assert(~block == 0)
+        }
 
         base_pos := rv.Vec3{
             64 + f32(i % 8) * (64 + 4),
@@ -139,6 +155,7 @@ _update :: proc(prev_state: ^State) -> ^State {
     }
 
     rv.draw_text("LMB to spawn particles", {10, 10, 0}, scale = 2)
+    rv.draw_text(fmt.tprintf("Mouse Pos: %v\nMouse Delta: %v", rv.mouse_pos(), rv.mouse_delta()), {10, 100, 0}, scale = 2)
 
     rv.upload_gpu_layers()
     rv.render_gpu_layer(0, rv.DEFAULT_RENDER_TEXTURE, clear_color = rv.Vec3{0, 0, 0.5}, clear_depth = true)

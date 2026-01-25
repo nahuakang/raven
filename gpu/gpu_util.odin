@@ -53,7 +53,7 @@ bucket_find_or_create :: proc(
 
 
 
-Bit_Pool :: struct($N: int) where N % 64 == 0, N > 0 {
+Bit_Pool :: struct($N: int) where N % 64 == 0 {
     l0: [(N + 4095) / 4096]u64,
     l1: [N / 64]u64,
 }
@@ -86,6 +86,8 @@ bit_pool_find_0 :: proc "contextless" (bp: Bit_Pool($N)) -> (index: int, ok: boo
 }
 
 bit_pool_set_1 :: proc "contextless" (bp: ^Bit_Pool($N), #any_int index: u64) {
+    assert_contextless(index >= 0 && index < u64(N))
+
     l1_index := index / 64
     l1_slot := index % 64
 
@@ -103,19 +105,23 @@ bit_pool_set_1 :: proc "contextless" (bp: ^Bit_Pool($N), #any_int index: u64) {
 }
 
 bit_pool_set_0 :: proc "contextless" (bp: ^Bit_Pool($N), #any_int index: u64) {
+    assert_contextless(index >= 0 && index < u64(N))
+
     l1_index := index / 64
     l1_slot := index % 64
 
-    l0_index := index / 4096
-    l0_slot := index % 4096
+    l0_index := l1_index / 64
+    l0_slot := l1_index % 64
 
     // Always clear L0, it must be non-empty after deleting from L1
-    bp.l0[l0_index] &~= 1 << l0_slot
-    bp.l1[l1_index] &~= 1 << l1_slot
+    bp.l0[l0_index] &= ~(1 << l0_slot)
+    bp.l1[l1_index] &= ~(1 << l1_slot)
 }
 
 @(require_results)
 bit_pool_check_1 :: proc "contextless" (bp: Bit_Pool($N), #any_int index: u64) -> bool {
+    assert_contextless(index >= 0 && index < u64(N))
+
     l1_index := index / 64
     l1_slot := index % 64
     return (bp.l1[l1_index] & (1 << l1_slot)) != 0
