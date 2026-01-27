@@ -303,7 +303,7 @@ when BACKEND == BACKEND_WINDOWS {
         si: windows.STARTUPINFOW
         pi: windows.PROCESS_INFORMATION
 
-        si.cb = size_of(si);
+        si.cb = size_of(si)
 
         wargs := windows.utf8_to_utf16_alloc(args, context.temp_allocator)
 

@@ -22,7 +22,8 @@ jobs:
       - name: Check All
         shell: cmd
         run: |
+          set FLAGS="-vet-unused -vet-using-stmt -vet-using-param -vet-style -vet-semicolon -debug"
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          .\Odin\odin check examples/hello -vet -strict-style -debug
-          .\Odin\odin check examples/hello -vet -strict-style -debug -define:GPU_BACKEND=WGPU
-          .\Odin\odin check examples/hello -vet -strict-style -debug -define:GPU_BACKEND=Dummy -define:PLATFORM_BACKEND=Dummy
+          .\Odin\odin check examples/hello %FLAGS%
+          .\Odin\odin check examples/hello %FLAGS% -define:GPU_BACKEND=WGPU
+          .\Odin\odin check examples/hello %FLAGS% -define:GPU_BACKEND=Dummy -define:PLATFORM_BACKEND=Dummy

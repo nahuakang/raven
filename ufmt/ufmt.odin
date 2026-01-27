@@ -83,7 +83,7 @@ tprintf :: proc(format: string, args: ..any) -> string {
             case u32:   _append_hex(&buf,      cast(u64)val, size_of(val))
             case i32:   _append_hex(&buf,      cast(u64)val, size_of(val))
             case u64:   _append_hex(&buf,               val, size_of(val))
-            case i64:   _append_hex(&buf, transmute(u64)val, size_of(val))
+            case i64:   _append_hex(&buf,      cast(u64)val, size_of(val))
             case uint:  _append_hex(&buf,      cast(u64)val, size_of(val))
             case int:   _append_hex(&buf,      cast(u64)val, size_of(val))
             case: return "<NOT INT>"
@@ -165,12 +165,10 @@ _append_int :: proc(buf: ^[dynamic]byte, value: int) {
         temp_index -= 1
     }
 
-    append_elems(buf, ..cast([]u8)temp[temp_index + 1:])
+    append_elems(buf, ..temp[temp_index + 1:])
 }
 
 _append_hex :: proc(buf: ^[dynamic]byte, value: u64, size: int) {
-    val := value
-
     append_elem_string(buf, "0x")
 
     shift := (size * 8) - 4
@@ -220,7 +218,7 @@ _append_float :: proc(buf: ^[dynamic]byte, value: f64) {
 // TODO: support very simple RTTI traversal
 
 _append_indent :: proc(buf: ^[dynamic]byte, num: int) {
-    for i in 0..<num {
+    for _ in 0..<num {
         append_elem(buf, '\t')
     }
 }

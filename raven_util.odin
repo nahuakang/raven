@@ -97,7 +97,7 @@ vcast :: proc "contextless" ($T: typeid, v: [$N]$E) -> (result: [N]T)
 }
 
 @(require_results)
-int_cast :: proc($Dst: typeid, v: $Src) -> Dst where intrinsics.type_is_integer(Dst) && intrinsics.type_is_integer(Src) {
+int_cast :: proc($Dst: typeid, v: $Src) -> Dst where intrinsics.type_is_integer(Dst), intrinsics.type_is_integer(Src) {
     assert(v == Src(Dst(v)), "Safe integer cast failed")
     return cast(Dst)v
 }

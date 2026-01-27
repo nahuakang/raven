@@ -1728,7 +1728,7 @@ Input :: struct {
     mouse_buttons:      Input_Digital_Buffer(Mouse_Button),
 
     gamepads:           [MAX_GAMEPADS]Input_Gamepad,
-    gamepads_connected: bit_set[0..<MAX_GAMEPADS]
+    gamepads_connected: bit_set[0..<MAX_GAMEPADS],
 }
 
 Input_Gamepad :: struct {
@@ -3505,7 +3505,7 @@ upload_gpu_layers :: proc() {
 
     Batcher_State :: struct {
         consts:         [MAX_TOTAL_DRAW_BATCHES]Draw_Batch_Constants,
-        consts_num:     u32
+        consts_num:     u32,
     }
 
     batcher: Batcher_State
@@ -3514,7 +3514,7 @@ upload_gpu_layers :: proc() {
         _counter_add(.Num_Total_Instances, u64(
             len(layer.sprites) +
             len(layer.meshes) +
-            len(layer.triangles)
+            len(layer.triangles),
         ))
     }
 
@@ -4440,7 +4440,7 @@ draw_counter :: proc(kind: Counter_Kind, pos: Vec3, scale: f32 = 1, unit: f32 = 
 
     rect := Rect{
         min = {0, 1 - 1.0/128.0},
-        max = {0 + 1.0/128.0, 1}
+        max = {0 + 1.0/128.0, 1},
     }
 
     counter := _state.counters[kind]
