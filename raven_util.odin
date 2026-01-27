@@ -18,7 +18,7 @@ LIGHT_GRAY  :: Vec4{0.75, 0.75, 0.75, 1}
 RED         :: Vec4{1, 0, 0, 1}
 DARK_RED    :: Vec4{0.5, 0, 0, 1}
 LIGHT_RED   :: Vec4{1, 0.5, 0.5, 1}
-GREEN       :: Vec4{0.5, 1, 0.5, 1}
+GREEN       :: Vec4{0, 1, 0, 1}
 DARK_GREEN  :: Vec4{0, 0.5, 0, 1}
 LIGHT_GREEN :: Vec4{0.5, 1, 0.5, 1}
 BLUE        :: Vec4{0, 0, 1, 1}

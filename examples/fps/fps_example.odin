@@ -9,9 +9,20 @@ import "../../platform"
 state: ^State
 
 State :: struct {
-    pos:    rv.Vec3,
-    vel:    rv.Vec3,
-    ang:    rv.Vec3,
+    pos:        rv.Vec3,
+    vel:        rv.Vec3,
+    ang:        rv.Vec3,
+    ang_offs:   Spring3,
+    pos_offs:   Spring3,
+}
+
+Spring3 :: struct {
+    val:    rv.Vec3,
+    delta:  rv.Vec3,
+}
+
+update_spring :: proc(spr: ^Spring3, target: rv.Vec3 = 0, stiff: f32 = 1, damp: f32 = 1) {
+
 }
 
 main :: proc() {
@@ -61,6 +72,9 @@ _update :: proc(prev: ^State) -> ^State {
 
     state.ang.xy += rv.mouse_delta().yx * {-1, 1} * 0.002
     state.ang.x = clamp(state.ang.x, -math.PI * 0.49, math.PI * 0.49)
+    state.ang.z = rv.lexp(state.ang.z, 0, delta * 5)
+
+    state.ang.z += move.x * delta * -0.2
 
     cam_rot := rv.euler_rot(state.ang)
     mat := linalg.matrix3_from_quaternion_f32(cam_rot)
@@ -86,10 +100,18 @@ _update :: proc(prev: ^State) -> ^State {
         state.vel = rv.lexp(state.vel, 0, delta * 8)
     }
 
-    rv.set_layer_params(0, rv.make_3d_perspective_camera(state.pos, cam_rot))
+    cam_pos := state.pos
+
+    if grounded {
+        cam_pos.y += 0.1 * math.sin_f32(rv.get_time() * 11) * rv.remap_clamped(linalg.length(state.vel.xz), 0, 2, 0, 1)
+    }
+
+    rv.set_layer_params(0, rv.make_3d_perspective_camera(cam_pos, cam_rot))
     rv.set_layer_params(1, rv.make_screen_camera())
 
     rv.bind_texture("default")
+    rv.bind_depth_test(true)
+    rv.bind_depth_write(true)
 
     rv.draw_mesh_by_handle(
         rv.get_mesh("Plane"),
@@ -99,6 +121,7 @@ _update :: proc(prev: ^State) -> ^State {
     )
 
     rv.bind_layer(1)
+
     rv.bind_texture("thick")
     rv.draw_text("Use WASD and QE to move, mouse to look", {14, 14, 0.1}, scale = math.ceil(rv._state.dpi_scale)) // DPI HACK
     rv.draw_text(fmt.tprint(rv._state.input.keys.buffered), {14, 200, 0.1}, scale = math.ceil(rv._state.dpi_scale)) // DPI HACK
