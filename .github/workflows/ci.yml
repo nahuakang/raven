@@ -18,6 +18,7 @@ jobs:
           ./build.bat
           ./odin version
           ./odin report
+          echo %CD%>> %GITHUB_PATH%
 
       - name: Check All
         shell: cmd
