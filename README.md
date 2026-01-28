@@ -5,7 +5,7 @@ A toolkit for making 2D and 3D games in Odin
 
 ***WARNING: EARLY ALPHA VERSION***
 
-Do NOT use for anything serious yet. Core features might be broken.
+Do NOT use for anything serious yet. Major features aren't fully finished and might break. There will be large breaking API changes.
 
 Windows is most stable, WASM+WebGPU builds usually work but Linux and MacOS isn't supported yet.
 
@@ -184,6 +184,7 @@ remap(x, a0, a1, b0, b1: f32) -> f32        // Map x from range a0..a1 to b0..b1
 smoothstep(edge0, edge1, x: f32) -> f32     // Generates a smooth curve from x in range edge0..edge1
 oklerp(a, b: Vec4, t: f32) -> Vec4          // Interpolate colors with OKLAB
 ```
+
 
 
 
