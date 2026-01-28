@@ -5,16 +5,19 @@
 // NOTE: curly braces don't need to be doubled ({{ and }}) like in `core:fmt`
 //
 // By Jakub Tomšů
-// Read <link> for more info.
+// Read https://jakubtomsu.github.io/posts/odin_comp_speed/ for more info.
 package ufmt
 
+import "core:fmt"
 import "base:runtime"
 
-printf :: proc(format: string, args: ..any) {
+INDENT :: "  "
+
+eprintf :: proc(format: string, args: ..any) {
     runtime.print_string(tprintf(format = format, args = args))
 }
 
-printfln :: proc(format: string, args: ..any) {
+eprintfln :: proc(format: string, args: ..any) {
     runtime.print_string(tprintf(format = format, args = args))
     runtime.print_byte('\n')
 }
@@ -112,7 +115,7 @@ tprintf :: proc(format: string, args: ..any) -> string {
             _append_any(&buf, arg, nested = false, pretty = true, depth = 0)
 
 
-        case '%':
+        case '%', ' ':
             append_elem(&buf, '%')
             consume_arg = false
 
@@ -217,80 +220,278 @@ _append_float :: proc(buf: ^[dynamic]byte, value: f64) {
 
 // TODO: support very simple RTTI traversal
 
+_is_type_simple :: proc(ti: ^runtime.Type_Info) -> bool {
+    base := runtime.type_info_base(ti)
+    #partial switch v in base.variant {
+    case runtime.Type_Info_Named:
+    case runtime.Type_Info_Integer,
+        runtime.Type_Info_Float,
+        runtime.Type_Info_Rune,
+        runtime.Type_Info_Quaternion,
+        runtime.Type_Info_Boolean:
+        return true
+    }
+
+    return false
+}
+
+_extract_int :: proc(ptr: rawptr, size: int) -> u64 {
+    switch size {
+    case 1: return u64((cast(^u8)ptr)^)
+    case 2: return u64((cast(^u16)ptr)^)
+    case 3: return u64((cast(^u32)ptr)^)
+    case 4: return (cast(^u64)ptr)^
+    }
+    panic("Integer size not supported")
+}
+
 _append_indent :: proc(buf: ^[dynamic]byte, num: int) {
     for _ in 0..<num {
-        append_elem(buf, '\t')
+        // append_elem(buf, ' ')
+        append_elem_string(buf, INDENT)
     }
+}
+
+_append_slice :: proc(buf: ^[dynamic]byte, data: rawptr, len: int, stride: int, elem_id: typeid, pretty: bool, depth: int) {
+    multiline := pretty
+    if len <= 4 || _is_type_simple(type_info_of(elem_id)) {
+        multiline = false
+    }
+
+    append_elem(buf, '{')
+    if multiline {
+        append_elem(buf, '\n')
+    }
+
+    for i in 0..<len {
+        if multiline {
+            _append_indent(buf, depth + 1)
+        }
+
+        _append_any(buf, any{rawptr(uintptr(data) + uintptr(stride * i)), elem_id}, nested = true, pretty = multiline, depth = depth + 1)
+
+        if i + 1 < len || multiline {
+            append_elem_string(buf, ", ")
+        }
+
+        if multiline {
+            append_elem(buf, '\n')
+        }
+    }
+
+    if multiline {
+        _append_indent(buf, depth)
+    }
+    append_elem(buf, '}')
 }
 
 _append_any :: proc(buf: ^[dynamic]byte, value: any, nested := false, pretty := false, depth := 0) {
     assert(depth < 64)
 
-    if pretty {
-        _append_indent(buf, depth)
+    switch val in value {
+    case rune:      _append_rune(buf, val); return
+    case string:    _append_string(buf, val, quoted = nested); return
+    case cstring:   _append_string(buf, string(val), quoted = nested); return
+    case u8:        _append_int(buf, int(val)); return
+    case i8:        _append_int(buf, int(val)); return
+    case u16:       _append_int(buf, int(val)); return
+    case i16:       _append_int(buf, int(val)); return
+    case u32:       _append_int(buf, int(val)); return
+    case i32:       _append_int(buf, int(val)); return
+    case u64:       _append_int(buf, int(val)); return
+    case i64:       _append_int(buf, int(val)); return
+    case uint:      _append_int(buf, int(val)); return
+    case int:       _append_int(buf, int(val)); return
+    case f16:       _append_float(buf, f64(val)); return
+    case f32:       _append_float(buf, f64(val)); return
+    case f64:       _append_float(buf, f64(val)); return
+    case rawptr:    _append_hex(buf, u64(uintptr(val)), size_of(rawptr)); return
+    case uintptr:   _append_hex(buf, u64(val), size_of(uintptr)); return
     }
 
-    switch val in value {
-    case rune:    _append_rune(buf, val); return
-    case string:  _append_string(buf, val, quoted = nested); return
-    case cstring: _append_string(buf, string(val), quoted = nested); return
-    case u8:      _append_int(buf, int(val)); return
-    case i8:      _append_int(buf, int(val)); return
-    case u16:     _append_int(buf, int(val)); return
-    case i16:     _append_int(buf, int(val)); return
-    case u32:     _append_int(buf, int(val)); return
-    case i32:     _append_int(buf, int(val)); return
-    case u64:     _append_int(buf, int(val)); return
-    case i64:     _append_int(buf, int(val)); return
-    case uint:    _append_int(buf, int(val)); return
-    case int:     _append_int(buf, int(val)); return
-    case f16:     _append_float(buf, f64(val)); return
-    case f32:     _append_float(buf, f64(val)); return
-    case f64:     _append_float(buf, f64(val)); return
-    }
 
     ti := type_info_of(value.id)
 
-    #partial switch v in ti.variant {
+    switch v in ti.variant {
+    case runtime.Type_Info_Integer, runtime.Type_Info_Rune, runtime.Type_Info_Float, runtime.Type_Info_String:
+        unreachable()
+
+    case runtime.Type_Info_Pointer,
+         runtime.Type_Info_Multi_Pointer,
+         runtime.Type_Info_Procedure:
+        _append_hex(buf, u64((cast(^uintptr)value.data)^), size_of(uintptr))
+
+    case runtime.Type_Info_Boolean: unimplemented()
+
+    case runtime.Type_Info_Complex: unimplemented()
+    case runtime.Type_Info_Quaternion: unimplemented()
+
     case runtime.Type_Info_Named:
         _append_any(buf, any({data = value.data, id = v.base.id}), nested, pretty, depth)
 
     case runtime.Type_Info_Struct:
+        multiline := pretty
+
+        // Short structs
+        if multiline && v.field_count <= 4 {
+            all_simple := true
+            for type in v.types[:v.field_count] {
+                if !_is_type_simple(type) {
+                    all_simple = false
+                    break
+                }
+            }
+            if all_simple {
+                multiline = false
+            }
+        }
+
         append_elem(buf, '{')
-        if pretty {
+        if multiline {
             append_elem(buf, '\n')
         }
         for i in 0..<v.field_count {
+            if multiline do _append_indent(buf, depth + 1)
             append_elem_string(buf, v.names[i])
             append_elem_string(buf, " = ")
 
-            val := any({
+            val := any{
                 data = rawptr(uintptr(value.data) + v.offsets[i]),
                 id = v.types[i].id,
-            })
+            }
 
-            _append_any(buf, val, true, pretty, depth + 1)
+            _append_any(buf, val, true, multiline, depth + 1)
 
-            if i + 1 < v.field_count {
+            if i + 1 < v.field_count || multiline {
                 append_elem_string(buf, ", ")
             }
+
+            if multiline {
+                append_elem(buf, '\n')
+            }
         }
-        if pretty {
+        if multiline {
             _append_indent(buf, depth)
         }
         append_elem(buf, '}')
-        if pretty {
+
+    case runtime.Type_Info_Bit_Field:
+
+
+    case runtime.Type_Info_Enum:
+        _ = v.base.variant.(runtime.Type_Info_Integer)
+        val := _extract_int(value.data, v.base.size)
+        for enum_val, i in v.values {
+            if val == u64(enum_val) {
+                append_elem(buf, '.')
+                append_elem_string(buf, v.names[i])
+                break
+            }
+        }
+
+    case runtime.Type_Info_Bit_Set:
+        val := _extract_int(value.data, v.elem.size)
+
+        append_elem(buf, '{')
+
+        for bit_index, i in v.lower..=v.upper {
+            if ((1 << uint(bit_index)) & val) == 0 {
+                continue
+            }
+
+            elem := runtime.type_info_base(v.elem)
+
+            #partial switch ve in elem.variant {
+            case runtime.Type_Info_Enum:
+                append_elem(buf, '.')
+                append_elem_string(buf, ve.names[i - int(v.lower)])
+
+            case runtime.Type_Info_Integer:
+                unimplemented()
+
+            case: panic("Invalid bit set backing type")
+            }
+
+            if i + 1 < int(v.upper) {
+                append_elem_string(buf, ", ")
+            }
+        }
+
+        append_elem(buf, '}')
+
+
+    case runtime.Type_Info_Enumerated_Array:
+        index_enum := runtime.type_info_base(v.index).variant.(runtime.Type_Info_Enum)
+
+        multiline := pretty
+        if v.count <= 4 && _is_type_simple(v.elem) {
+            multiline = false
+        }
+
+        append_elem(buf, '{')
+        if multiline {
             append_elem(buf, '\n')
         }
 
-    case runtime.Type_Info_Bit_Field: unimplemented()
-    case runtime.Type_Info_Bit_Set: unimplemented()
-    case runtime.Type_Info_Enumerated_Array: unimplemented()
-    case runtime.Type_Info_Array: unimplemented()
-    case runtime.Type_Info_Slice: unimplemented()
-    case runtime.Type_Info_Dynamic_Array: unimplemented()
+        for i in 0..<v.count {
+            if multiline {
+                _append_indent(buf, depth + 1)
+            }
 
-    case:
-        append_elem_string(buf, "<TYPE NOT SUPPORTED>")
+            append_elem(buf, '.')
+            append_elem_string(buf, index_enum.names[i])
+            append_elem_string(buf, " = ")
+
+            _append_any(buf, any{rawptr(uintptr(value.data) + uintptr(v.elem_size * i)), v.elem.id}, nested = true, pretty = multiline, depth = depth + 1)
+
+            if i + 1 < v.count || multiline {
+                append_elem_string(buf, ", ")
+            }
+
+            if multiline {
+                append_elem(buf, '\n')
+            }
+        }
+
+        if multiline {
+            _append_indent(buf, depth)
+        }
+        append_elem(buf, '}')
+
+    case runtime.Type_Info_Array:
+        _append_slice(buf, value.data, v.count, v.elem_size, v.elem.id, pretty = pretty, depth = depth)
+
+    case runtime.Type_Info_Simd_Vector:
+        _append_slice(buf, value.data, v.count, v.elem_size, v.elem.id, pretty = pretty, depth = depth)
+
+    case runtime.Type_Info_Slice:
+        raw := (transmute(^runtime.Raw_Slice)value.data)^
+        _append_slice(buf, raw.data, raw.len, v.elem_size, v.elem.id, pretty = pretty, depth = depth)
+
+    case runtime.Type_Info_Dynamic_Array:
+        raw := (transmute(^runtime.Raw_Dynamic_Array)value.data)^
+        _append_slice(buf, raw.data, raw.len, v.elem_size, v.elem.id, pretty = pretty, depth = depth)
+
+    case runtime.Type_Info_Any:
+        _append_any(buf, (cast(^any)value.data)^, nested = true, pretty = pretty, depth = depth)
+
+    case runtime.Type_Info_Type_Id:
+        ti := type_info_of((cast(^typeid)value.data)^)
+        #partial switch vt in ti.variant {
+        case runtime.Type_Info_Named:
+            append_elem_string(buf, vt.name)
+        case:
+            append_elem_string(buf, "typeid")
+            // TODO
+        }
+
+    case runtime.Type_Info_Union: unimplemented()
+    case runtime.Type_Info_Map: unimplemented()
+    case runtime.Type_Info_Matrix: unimplemented()
+
+    case runtime.Type_Info_Soa_Pointer: unimplemented()
+
+    case runtime.Type_Info_Parameters:
+        unreachable()
     }
 }

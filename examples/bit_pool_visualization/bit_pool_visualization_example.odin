@@ -154,7 +154,6 @@ _update :: proc(prev_state: ^State) -> ^State {
 
             // rv.draw_sprite()
         }
-
     }
 
     rv.bind_sprite_scaling(.Pixel)
