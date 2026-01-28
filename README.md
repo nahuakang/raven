@@ -82,11 +82,22 @@ odin run build -- run_hot examples\hello
 ```
 
 ## Project Setup
+The recommended approach is using [git subtrees](https://github.com/git/git/blob/master/contrib/subtree/git-subtree.adoc), a nicer alternative to submodules or manual copy-pasting.
 
-The recommended approach is using [git subtrees]. From your project's root folder, clone the repo with this command:
+From your project's root folder, clone the repo with this command:
 ```
 git subtree add --prefix=raven https://github.com/jakubtomsu/raven main --squash
 ```
+
+Now Raven appears just as a regular directory in your git repo, and you're good to go.
+
+To pull the latest changes, use the following command:
+```
+git subtree pull --prefix=raven https://github.com/jakubtomsu/raven main --squash
+```
+
+> In case you want to delete the entire subtree, just remove the folder. There shouldn't be any hidden metadata.
+
 
 
 # Docs
