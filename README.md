@@ -1,13 +1,15 @@
 <div align="center">
 
 # RAVEN
-A toolkit for making stylized 2D and 3D games in Odin
+A toolkit for making 2D and 3D games in Odin
 
 ***WARNING: EARLY ALPHA VERSION***
 
-Do NOT use for anything serious yet.
+Do NOT use for anything serious yet. Major features aren't fully finished and might break. There will be large breaking API changes.
 
-[Discord](https://discord.com/invite/wn5jMMMYe4)
+Windows is most stable, WASM+WebGPU builds usually work but Linux and MacOS isn't supported yet.
+
+### [Discord](https://discord.com/invite/wn5jMMMYe4)
 
 </div>
 
@@ -17,7 +19,7 @@ Something *simple* you can prototype in, but also *stable* enough to make polish
 
 Batteries-included toolkit for the entire code and asset pipeline.
 
-Inspired by Raylib, Sokol and PICO8.
+Inspired by Sokol, PICO8 and Raylib.
 
 ## Features
 - First-class 3D support
@@ -28,11 +30,19 @@ Inspired by Raylib, Sokol and PICO8.
 - Minimal dependencies
     - the core of the engine is implemented fully from scratch, see `platform` and `gpu`
 
+
 ## Roadmap
+- Finish/Rewrite Asset system
+  - Scene asset pipeline
+  - Blender exporter plugin/lib
 - Lightweight shader transpiler
+- SDL3 platform and GPU backend as a fallback
+- Finish Audio system
 - Better fonts
     - Draw text iterator
     - Unicode font support (currently only CP437 atlases are supported)
+- Simple GUI and gizmo system
+- Geometry and Collision package
 
 ## Simple Example
 
@@ -52,6 +62,8 @@ rv.render_gpu_layer(0, rv.DEFAULT_RENDER_TEXTURE,
 
 To see what the entire full code looks like, check out [examples/hello](examples/hello/hello_example.odin).
 
+# Getting Started
+
 ## Prequisities
 Install [Odin](https://github.com/odin-lang/Odin) and make sure it's in your path. Check the [Official Install docs](https://odin-lang.org/docs/install/) for more info.
 
@@ -69,6 +81,26 @@ Alternatively you can run them in hot-reload mode:
 odin run build -- run_hot examples\hello
 ```
 
+## Project Setup
+The recommended approach is using [git subtrees](https://github.com/git/git/blob/master/contrib/subtree/git-subtree.adoc), a nicer alternative to submodules or manual copy-pasting.
+
+From your project's root folder, clone the repo with this command:
+```
+git subtree add --prefix=raven https://github.com/jakubtomsu/raven main --squash
+```
+
+Now Raven appears just as a regular directory in your git repo, and you're good to go.
+
+To pull the latest changes, use the following command:
+```
+git subtree pull --prefix=raven https://github.com/jakubtomsu/raven main --squash
+```
+
+> In case you want to delete the entire subtree, just remove the folder. There shouldn't be any hidden metadata.
+
+
+
+# Docs
 
 ## Hot-reload
 
@@ -92,14 +124,7 @@ And now just enter `localhost:8000` into a browser search bar.
 To see the output log, open up the Developer Tools Console (F12 usually).
 
 Please note this is still very early, the JS platform is unfinished and the WebGPU support might run into some issues.
-
 You can also ensure WebGPU is behaving correctly locally with `odin run my_package -define:GPU_BACKEND=WGPU`, however the wgpu-native used on desktop can be slightly different than the Chrome Dawn implementation.
-
-## Contributing
-For info about bug reports and contributing, see [CONTRIBUTING](CONTRIBUTING.md)
-
-
-# Docs
 
 For more detailed information see the source code directly.
 
@@ -175,3 +200,8 @@ remap(x, a0, a1, b0, b1: f32) -> f32        // Map x from range a0..a1 to b0..b1
 smoothstep(edge0, edge1, x: f32) -> f32     // Generates a smooth curve from x in range edge0..edge1
 oklerp(a, b: Vec4, t: f32) -> Vec4          // Interpolate colors with OKLAB
 ```
+
+
+
+# Contributing
+For info about bug reports and contributing, see [CONTRIBUTING](CONTRIBUTING.md)

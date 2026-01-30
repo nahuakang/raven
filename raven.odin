@@ -18,7 +18,8 @@ import "gpu"
 import "platform"
 import "rscn"
 import "audio"
-import "ufmt"
+import "base"
+import "base/ufmt"
 
 // TODO: go through all TODOs
 
@@ -27,18 +28,15 @@ import "ufmt"
 // TODO: objects in scene data
 // TODO: asset_load and reload
 // TODO: consistent get_* and no get API!
-// TODO: VFS files and assets
-// TODO: multiple texture pools?
 // TODO: font state
 // TODO: audio
-// TODO: separate hash table size from backing array size
+// TODO: separate hash table size from backing array size?
 // TODO: abstract log_error and log_warn etc to comptime disable logging?
-// TODO: mouse x rect functions and unify rects
-// TODO: resolve degrees/radians! USE ONLY ONE EVERYWHERE
 // TODO: compress vertex and instance data more
-// TODO: simple "profiling line" for CPU and GPU timing
 // TODO: More "summary" info when app exist - min/max/avg cpu/gpu frame time, num draws, temp allocs, ..?
-// TODO: batch meshes with *roughly* the same vertex count (e.g. buckets with multiple of 256, or pow2), do bounds check in the VS.
+// TODO: uniform anchor values
+// TODO: drawing real lines, not quads
+// TODO: default module init/shutdown procs
 
 // ARTICLES
 // - blog post about two level bit sets
@@ -138,6 +136,14 @@ Fill_Mode :: enum u8 {
     Wire, // Two-sided wireframe mode
 }
 
+Sprite_Scaling :: enum u8 {
+    // Sprite scale determines the pixel scaling factor.
+    // Scale of 1 means each pixel is exactly one screen pixel.
+    Pixel = 0,
+    // No scaling, sprite scale is the final scale in pixels
+    // Scale of 1 means the ENTIRE sprite is 1x1 pixels.
+    Absolute,
+}
 
 _state: ^State
 
@@ -371,17 +377,18 @@ Texture_Data :: struct {
 
 
 Bind_State :: struct {
-    draw_layer:         u8,
-    blend:              Blend_Mode,
-    fill:               Fill_Mode,
-    depth_test:         bool,
-    depth_write:        bool,
-    texture_mode:       Bind_Texture_Mode,
-    texture:            u8,
-    texture_slice:      u8,
-    texture_size:       [2]u16, // cached
-    pixel_shader:       u8,
-    vertex_shader:      u8,
+    draw_layer:             u8,
+    blend:                  Blend_Mode,
+    fill:                   Fill_Mode,
+    depth_test:             bool,
+    depth_write:            bool,
+    texture_mode:           Bind_Texture_Mode,
+    texture:                u8,
+    texture_slice:          u8,
+    texture_size:           [2]u16, // cached
+    pixel_shader:           u8,
+    vertex_shader:          u8,
+    sprite_scaling:         Sprite_Scaling,
 }
 
 Bind_Texture_Mode :: enum u8 {
@@ -587,7 +594,7 @@ Init_Proc ::       #type proc() -> rawptr
 Shutdown_Proc ::   #type proc(rawptr)
 Update_Proc ::     #type proc(rawptr) -> rawptr
 
-Module_API :: struct #all_or_none {
+Module_API :: struct {
     state_size: i64,
     init:       Init_Proc,
     shutdown:   Shutdown_Proc,
@@ -1121,7 +1128,7 @@ begin_frame :: proc() -> (keep_running: bool) {
 
     _state.last_time = time_ns
 
-    if _state.frame_index > 10 && _state.frame_dur_ns > 1e6 {
+    if _state.frame_index > 10 {
         _counter_add(.CPU_Frame_Ns, _state.frame_dur_ns)
     } else {
         _counter_add(.CPU_Frame_Ns, max(u64))
@@ -1134,12 +1141,14 @@ begin_frame :: proc() -> (keep_running: bool) {
 
     _state.input.mouse_delta = 0
     _state.input.scroll_delta = 0
-    _state.input.keys_pressed = {}
-    _state.input.keys_repeated = {}
-    _state.input.keys_released = {}
-    _state.input.mouse_buttons_pressed = {}
-    _state.input.mouse_buttons_repeated = {}
-    _state.input.mouse_buttons_released = {}
+
+    delta := get_delta_time()
+    _begin_input_digital_buffer_frame(&_state.input.keys, delta)
+    _begin_input_digital_buffer_frame(&_state.input.mouse_buttons, delta)
+    for &gp in _state.input.gamepads {
+        _begin_input_digital_buffer_frame(&gp.buttons, delta)
+        gp.axes = {}
+    }
 
     for event in platform.poll_window_events(_state.window) {
         switch v in event {
@@ -1148,32 +1157,16 @@ begin_frame :: proc() -> (keep_running: bool) {
 
         case platform.Event_Key:
             if v.pressed {
-                if v.key not_in _state.input.keys_down {
-                    _state.input.keys_pressed += {v.key}
-                    _state.input.keys_buffered += {v.key}
-                    _state.input.keys_timer[v.key] = 0
-                } else {
-                    _state.input.keys_repeated += {v.key}
-                }
-                _state.input.keys_down += {v.key}
+                _input_digital_press(&_state.input.keys, v.key)
             } else {
-                _state.input.keys_down -= {v.key}
-                _state.input.keys_released += {v.key}
+                _input_digital_release(&_state.input.keys, v.key)
             }
 
         case platform.Event_Mouse_Button:
             if v.pressed {
-                if v.button not_in _state.input.mouse_buttons_down {
-                    _state.input.mouse_buttons_pressed += {v.button}
-                    _state.input.mouse_buttons_buffered += {v.button}
-                    _state.input.mouse_buttons_timer[v.button] = 0
-                } else {
-                    _state.input.mouse_buttons_repeated += {v.button}
-                }
-                _state.input.mouse_buttons_down += {v.button}
+                _input_digital_press(&_state.input.mouse_buttons, v.button)
             } else {
-                _state.input.mouse_buttons_down -= {v.button}
-                _state.input.mouse_buttons_released += {v.button}
+                _input_digital_release(&_state.input.mouse_buttons, v.button)
             }
 
         case platform.Event_Mouse:
@@ -1187,6 +1180,61 @@ begin_frame :: proc() -> (keep_running: bool) {
 
         case platform.Event_Window_Size:
         }
+    }
+
+    for i in 0..<MAX_GAMEPADS {
+        inp, inp_ok := platform.get_gamepad_state(i)
+        if !inp_ok {
+            _state.input.gamepads[i] = {}
+            _state.input.gamepads_connected -= {i}
+        }
+
+        _state.input.gamepads_connected += {i}
+
+        gpad := &_state.input.gamepads[i]
+
+        for btn in Gamepad_Button {
+            if btn in inp.buttons {
+                _input_digital_press(&gpad.buttons, btn)
+            } else {
+                _input_digital_release(&gpad.buttons, btn)
+            }
+        }
+
+        gpad.buttons.released = {}
+
+        gpad.axes[.Left_Trigger] = inp.axes[.Left_Trigger] > 0.1 ? clamp(gpad.axes[.Left_Trigger], 0, 1) : 0
+        gpad.axes[.Right_Trigger] = inp.axes[.Right_Trigger] > 0.1 ? clamp(gpad.axes[.Right_Trigger], 0, 1) : 0
+
+        l_thumb := Vec2{
+            gpad.axes[.Left_Thumb_X],
+            gpad.axes[.Left_Thumb_Y],
+        }
+
+        r_thumb := Vec2{
+            gpad.axes[.Right_Thumb_X],
+            gpad.axes[.Right_Thumb_Y],
+        }
+
+        l_len := linalg.length(l_thumb)
+        r_len := linalg.length(r_thumb)
+
+        if l_len < 0.1 {
+            l_thumb = 0
+        } else if l_len > 1 {
+            l_thumb = l_thumb / l_len
+        }
+
+        if r_len < 0.1 {
+            r_thumb = 0
+        } else if r_len > 1 {
+            r_thumb = r_thumb / r_len
+        }
+
+        gpad.axes[.Left_Thumb_X] = l_thumb.x
+        gpad.axes[.Left_Thumb_Y] = l_thumb.y
+        gpad.axes[.Right_Thumb_X] = r_thumb.x
+        gpad.axes[.Right_Thumb_Y] = r_thumb.y
     }
 
     if _state.frame_index < 5 {
@@ -1239,6 +1287,7 @@ begin_frame :: proc() -> (keep_running: bool) {
         pixel_shader = int_cast(u8, _state.default_ps.index),
         vertex_shader = int_cast(u8, _state.default_vs.index),
         blend = .Opaque,
+        texture = u8(_state.default_texture.index),
     }
 
     bind_pixel_shader_by_handle({})
@@ -1250,6 +1299,17 @@ begin_frame :: proc() -> (keep_running: bool) {
 }
 
 end_frame :: proc(vsync := true) {
+
+    curr_time := platform.get_time_ns()
+
+    frame_work_dur_ns := curr_time - _state.last_time
+
+    if _state.frame_index > 10 {
+        _counter_add(.CPU_Frame_Work_Ns, frame_work_dur_ns)
+    } else {
+        _counter_add(.CPU_Frame_Work_Ns, max(u64))
+    }
+
     gpu.end_frame(sync = vsync)
 }
 
@@ -1293,27 +1353,32 @@ get_time :: proc() -> f32 {
 
 @(require_results)
 atlas_cell :: proc(split: [2]i32, coord: [2]i32, scale: [2]f32 = 1.0) -> Rect {
-    assert(split.x >= 1)
-    assert(split.y >= 1)
+    validate(split.x >= 1)
+    validate(split.y >= 1)
 
     p := Vec2{
         linalg.fract(f32(coord.x) / f32(split.x)),
         linalg.fract(f32(coord.y) / f32(split.y)),
     }
 
-    return {
+    result := Rect{
         min = p,
         max = p + {
             scale.x / f32(split.x),
             scale.y / f32(split.y),
         },
     }
+
+    result.min.y = 1.0 - result.min.y
+    result.max.y = 1.0 - result.max.y
+
+    return result
 }
 
 @(require_results)
 atlas_slot :: proc(split: [2]i32, #any_int index: i32) -> Rect {
-    assert(split.x >= 1)
-    assert(split.y >= 1)
+    validate(split.x >= 1)
+    validate(split.y >= 1)
 
     coord := [2]i32{
         index % split.x,
@@ -1323,14 +1388,19 @@ atlas_slot :: proc(split: [2]i32, #any_int index: i32) -> Rect {
     return atlas_cell(split, coord)
 }
 
+FONT_SPLIT :: 16
+
 @(require_results)
 font_cell :: proc(coord: [2]i32) -> Rect {
-    return atlas_cell(16, coord)
+    return atlas_cell(FONT_SPLIT, coord)
 }
 
 @(require_results)
 font_slot :: proc(#any_int index: i32) -> Rect {
-    return atlas_slot(16, index)
+    return font_cell([2]i32{
+        index % FONT_SPLIT,
+        index / FONT_SPLIT,
+    })
 }
 
 @(require_results)
@@ -1648,27 +1718,23 @@ MAX_GAMEPADS :: platform.MAX_GAMEPADS
 Key :: platform.Key
 Mouse_Button :: platform.Mouse_Button
 Gamepad_Button :: platform.Gamepad_Button
+Gamepad_Axis :: platform.Gamepad_Axis
 
 Input :: struct {
-    mouse_delta:            [2]f32,
-    mouse_pos:              [2]f32,
-    scroll_delta:           [2]f32,
+    mouse_delta:        [2]f32,
+    mouse_pos:          [2]f32,
+    scroll_delta:       [2]f32,
 
-    keys_down:              bit_set[Key],
-    keys_pressed:           bit_set[Key],
-    keys_released:          bit_set[Key],
-    keys_repeated:          bit_set[Key],
-    keys_buffered:          bit_set[Key],
-    keys_timer:             [Key]f32,
+    keys:               Input_Digital_Buffer(Key),
+    mouse_buttons:      Input_Digital_Buffer(Mouse_Button),
 
-    mouse_buttons_down:     bit_set[Mouse_Button],
-    mouse_buttons_pressed:  bit_set[Mouse_Button],
-    mouse_buttons_released: bit_set[Mouse_Button],
-    mouse_buttons_repeated: bit_set[Mouse_Button],
-    mouse_buttons_buffered: bit_set[Mouse_Button],
-    mouse_buttons_timer:    [Mouse_Button]f32,
+    gamepads:           [MAX_GAMEPADS]Input_Gamepad,
+    gamepads_connected: bit_set[0..<MAX_GAMEPADS],
+}
 
-    gamepads:               [MAX_GAMEPADS]Input_Gamepad,
+Input_Gamepad :: struct {
+    buttons:    Input_Digital_Buffer(Gamepad_Button),
+    axes:       [Gamepad_Axis]f32,
 }
 
 Input_Digital_Buffer :: struct($E: typeid) where intrinsics.type_is_enum(E) {
@@ -1680,13 +1746,29 @@ Input_Digital_Buffer :: struct($E: typeid) where intrinsics.type_is_enum(E) {
     timer:      [E]f32,
 }
 
-Input_Gamepad :: struct {
-    buttons_down:       bit_set[Gamepad_Button],
-    buttons_pressed:    bit_set[Gamepad_Button],
-    buttons_released:   bit_set[Gamepad_Button],
-    buttons_repeated:   bit_set[Gamepad_Button],
-    buttons_buffered:   bit_set[Gamepad_Button],
-    buttons_timer:      [Gamepad_Button]f32,
+_begin_input_digital_buffer_frame :: proc(buf: ^Input_Digital_Buffer($T), delta: f32) {
+    buf.pressed = {}
+    buf.repeated = {}
+    buf.released = {}
+    for &t in buf.timer {
+        t += delta
+    }
+}
+
+_input_digital_press :: proc(buf: ^Input_Digital_Buffer($T), elem: T) {
+    if elem not_in buf.down {
+        buf.pressed += {elem}
+        buf.buffered += {elem}
+        buf.timer[elem] = 0
+    } else {
+        buf.repeated += {elem}
+    }
+    buf.down += {elem}
+}
+
+_input_digital_release :: proc(buf: ^Input_Digital_Buffer($T), elem: T) {
+    buf.down -= {elem}
+    buf.released += {elem}
 }
 
 // NOTE: [0, 0] is the bottom left corner.
@@ -1705,24 +1787,24 @@ scroll_delta :: proc() -> [2]f32 {
 
 
 key_down :: proc(key: Key) -> bool {
-    return key in _state.input.keys_down
+    return key in _state.input.keys.down
 }
 
 // Down time is 0 on pressed.
 key_down_time :: proc(key: Key) -> f32 {
-    return _state.input.keys_timer[key]
+    return _state.input.keys.timer[key]
 }
 
 key_pressed :: proc(key: Key, buf: f32 = 0) -> bool {
-    if key in _state.input.keys_pressed {
+    if buf > 0.0001 &&
+        key in _state.input.keys.buffered &&
+        _state.input.keys.timer[key] <= buf
+    {
+        _state.input.keys.buffered -= {key}
         return true
     }
 
-    if buf > 0.0001 &&
-        key in _state.input.keys_buffered &&
-        _state.input.keys_timer[key] <= buf
-    {
-        _state.input.keys_buffered -= {key}
+    if key in _state.input.keys.pressed {
         return true
     }
 
@@ -1730,34 +1812,33 @@ key_pressed :: proc(key: Key, buf: f32 = 0) -> bool {
 }
 
 key_repeated :: proc(key: Key) -> bool {
-    return key in _state.input.keys_repeated
+    return key in _state.input.keys.repeated
 }
 
 key_released :: proc(key: Key) -> bool {
-    return key in _state.input.keys_released
+    return key in _state.input.keys.released
 }
 
 
-
 mouse_down :: proc(button: Mouse_Button) -> bool {
-    return button in _state.input.mouse_buttons_down
+    return button in _state.input.mouse_buttons.down
 }
 
 // Down time is 0 on pressed.
 mouse_down_time :: proc(button: Mouse_Button) -> f32 {
-    return _state.input.mouse_buttons_timer[button]
+    return _state.input.mouse_buttons.timer[button]
 }
 
 mouse_pressed :: proc(button: Mouse_Button, buf: f32 = 0) -> bool {
-    if button in _state.input.mouse_buttons_pressed {
+    if buf > 0.0001 &&
+        button in _state.input.mouse_buttons.buffered &&
+        _state.input.mouse_buttons.timer[button] <= buf
+    {
+        _state.input.mouse_buttons.buffered -= {button}
         return true
     }
 
-    if buf > 0.0001 &&
-        button in _state.input.mouse_buttons_buffered &&
-        _state.input.mouse_buttons_timer[button] <= buf
-    {
-        _state.input.mouse_buttons_buffered -= {button}
+    if button in _state.input.mouse_buttons.pressed {
         return true
     }
 
@@ -1765,11 +1846,11 @@ mouse_pressed :: proc(button: Mouse_Button, buf: f32 = 0) -> bool {
 }
 
 mouse_repeated :: proc(button: Mouse_Button) -> bool {
-    return button in _state.input.mouse_buttons_repeated
+    return button in _state.input.mouse_buttons.repeated
 }
 
 mouse_released :: proc(button: Mouse_Button) -> bool {
-    return button in _state.input.mouse_buttons_released
+    return button in _state.input.mouse_buttons.released
 }
 
 
@@ -2350,7 +2431,7 @@ create_texture_from_data :: proc(name: string, data: Texture_Data) -> (result: T
 
         assert(slice_index < 64)
 
-        log.infof("Creating a pooled texture '%s' of size %ix%i", name, data.size.x, data.size.y)
+        log.infof("Creating a pooled texture '%s' of size %ix%i with index %i", name, data.size.x, data.size.y, index)
 
         create_resource = false
 
@@ -2373,7 +2454,7 @@ create_texture_from_data :: proc(name: string, data: Texture_Data) -> (result: T
     }
 
     if create_resource {
-        log.infof("Creating a non-pooled texture '%s' of size %ix%i", name, data.size.x, data.size.y)
+        log.infof("Creating a non-pooled texture '%s' of size %ix%i with index %i", name, data.size.x, data.size.y, index)
 
         // Already exists, replace the old one.
         // Possibly a name hash collision.
@@ -2428,7 +2509,7 @@ decode_texture_data :: proc(data: []byte) -> (result: Texture_Data, ok: bool) {
     size: [2]i32
     channels: i32
 
-    // stbi.set_flip_vertically_on_load(true)
+    stbi.set_flip_vertically_on_load(true)
 
     data := stbi.load_from_memory(
         buffer = raw_data(data),
@@ -2808,6 +2889,10 @@ bind_fill :: proc(fill: Fill_Mode) {
     _state.bind_state.fill = fill
 }
 
+bind_sprite_scaling :: proc(scaling: Sprite_Scaling) {
+    _state.bind_state.sprite_scaling = scaling
+}
+
 bind_depth_write :: proc(write: bool) {
     _state.bind_state.depth_write = write
 }
@@ -2923,7 +3008,6 @@ bind_render_texture_by_handle :: proc(handle: Render_Texture_Handle) {
 }
 
 
-// TODO: separate the render texture.
 // NOTE: Prefer calling this before any draw_* commands.
 // But the params persist between frames.
 set_layer_params :: proc(
@@ -2947,12 +3031,6 @@ set_layer_params :: proc(
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // MARK: Draw
 //
-
-// TODO
-Sprite_Scaling :: enum u8 {
-    Pixel = 0,
-    Absolute,
-}
 
 
 // TODO: anchor
@@ -2985,15 +3063,40 @@ draw_sprite :: proc(
 
     draw: Sprite_Draw
 
+    size := Vec2{
+        scale.x * 0.5,
+        scale.y * 0.5,
+    }
+
+    switch _state.bind_state.sprite_scaling {
+    case .Pixel:
+        size *= {
+            f32(_state.bind_state.texture_size.x) * rect_size.x,
+            f32(_state.bind_state.texture_size.y) * rect_size.y,
+        }
+
+    case .Absolute:
+        // No scaling
+    }
+
+    center := pos
+    center += mat[0] * anchor.x * size.x
+    center += mat[1] * anchor.y * size.y
+
     // TODO: flip texture *data* instead of flipping sprites?
 
-    draw.inst = Sprite_Inst{
-        pos = pos,
-        mat_x = mat[0] * scale.x * +0.5 * f32(_state.bind_state.texture_size.x) * rect_size.x,
-        mat_y = mat[1] * scale.y * -0.5 * f32(_state.bind_state.texture_size.y) * rect_size.y,
-        uv_min_x = rect.min.x + UV_EPS,
-        uv_min_y = rect.min.y + UV_EPS,
-        uv_size = rect_size - UV_EPS * 2,
+    rect_size_sign := Vec2{
+        math.sign_f32(rect_size.x),
+        math.sign_f32(rect_size.y),
+    }
+
+    inst := Sprite_Inst{
+        pos = center,
+        mat_x = mat[0] * size.x,
+        mat_y = mat[1] * size.y,
+        uv_min_x = rect.min.x + rect_size_sign.x * UV_EPS,
+        uv_min_y = rect.min.y + rect_size_sign.y * UV_EPS,
+        uv_size = rect_size - rect_size_sign * UV_EPS * 2,
         color = {
             u8(clamp(col.r * 255, 0, 255)),
             u8(clamp(col.g * 255, 0, 255)),
@@ -3002,6 +3105,14 @@ draw_sprite :: proc(
         },
         tex_slice = _state.bind_state.texture_slice,
     }
+
+    draw_sprite_inst(inst)
+}
+
+draw_sprite_inst :: proc(inst: Sprite_Inst) {
+    draw: Sprite_Draw
+
+    draw.inst = inst
 
     draw.key = Draw_Sort_Key{
         texture         = _state.bind_state.texture,
@@ -3080,7 +3191,6 @@ draw_text :: proc(
 
         offs = text_glyph_apply(offs, r, scale = scale, char_size = char_size, spacing = spacing)
     }
-
 }
 
 rune_is_drawable :: proc(r: rune) -> bool {
@@ -3196,7 +3306,7 @@ draw_mesh_by_handle :: proc(
     _push_mesh_draw(_state.bind_state.draw_layer, draw)
 }
 
-draw_line :: proc(
+draw_sprite_line :: proc(
     a:          Vec3,
     b:          Vec3,
     width:      f32,
@@ -3376,7 +3486,6 @@ _upload_gpu_layer_constants :: proc() {
         }
 
         consts_buf[i] = const_data
-
     }
 
     gpu.update_constants(_state.draw_layers_consts, gpu.ptr_bytes(&consts_buf))
@@ -3397,7 +3506,7 @@ upload_gpu_layers :: proc() {
 
     Batcher_State :: struct {
         consts:         [MAX_TOTAL_DRAW_BATCHES]Draw_Batch_Constants,
-        consts_num:     u32
+        consts_num:     u32,
     }
 
     batcher: Batcher_State
@@ -3406,7 +3515,7 @@ upload_gpu_layers :: proc() {
         _counter_add(.Num_Total_Instances, u64(
             len(layer.sprites) +
             len(layer.meshes) +
-            len(layer.triangles)
+            len(layer.triangles),
         ))
     }
 
@@ -3690,9 +3799,24 @@ upload_gpu_layers :: proc() {
         _counter_add(.Num_Uploaded_Instances, u64(
             len(layer.sprites) +
             len(layer.meshes) +
-            len(layer.triangles)
+            len(layer.triangles),
         ))
     }
+
+    for &layer, _ in _state.draw_layers {
+        for b in layer.sprite_batches {
+            validate_draw_sort_key(b.key)
+        }
+
+        for b in layer.mesh_batches {
+            validate_draw_sort_key(b.key)
+        }
+
+        for b in layer.triangle_batches {
+            validate_draw_sort_key(b.key)
+        }
+    }
+
 
     return
 
@@ -3728,12 +3852,17 @@ upload_gpu_layers :: proc() {
                 }
             }
 
-            append(dst_batches, Draw_Batch{
+            validate_draw_sort_key(curr_key)
+
+            batch := Draw_Batch{
                 key = curr_key,
                 offset = u32(batcher.consts_num),
                 num = int_cast(u16, instance_num),
-            })
+            }
 
+            append_elem(dst_batches, batch)
+
+            assert(batcher.consts_num < len(batcher.consts))
             batcher.consts[batcher.consts_num] = {
                 instance_offset = inst_offs_base + instance_offs,
             }
@@ -3897,6 +4026,7 @@ render_gpu_layer :: proc(
         )
     }
 
+
     //
     // Triangles
     //
@@ -3936,10 +4066,11 @@ render_gpu_layer :: proc(
         )
     }
 
-
     return
 
     _set_pipeline_desc_apply_key :: proc(pip_desc: ^gpu.Pipeline_Desc, key: Draw_Sort_Key, loc := #caller_location) {
+        validate_draw_sort_key(key)
+
         pip_desc.blends[0] = _gpu_blend_mode_desc(key.blend)
         pip_desc.cull, pip_desc.fill = _gpu_fill_mode(key.fill)
         pip_desc.depth_comparison = key.depth_test ? .Greater_Equal : .Always
@@ -3955,7 +4086,7 @@ render_gpu_layer :: proc(
         case: panic("Invalid texture mode")
         }
 
-        assert(tex_res != {}, loc = loc)
+        assert(tex_res != {}, "Invalid texture resource", loc = loc)
         pip_desc.resources[2] = tex_res
     }
 }
@@ -4163,6 +4294,7 @@ is_box_in_frustum :: proc(fru: Frustum, pos: Vec3, rad: Vec3) -> bool #no_bounds
 //     // return p
 // }
 
+
 // Returns the ray direction.
 screen_to_world_ray :: proc(pos: Vec2, cam: Camera) -> Vec3 {
     cam_mvp := calc_camera_world_to_clip_matrix(cam)
@@ -4266,6 +4398,7 @@ Counter_State :: struct {
 
 Counter_Kind :: enum u8 {
     CPU_Frame_Ns,
+    CPU_Frame_Work_Ns,
     Num_Draw_Calls,
     Num_Total_Instances,
     Num_Uploaded_Instances, // non-culled
@@ -4306,6 +4439,11 @@ draw_counter :: proc(kind: Counter_Kind, pos: Vec3, scale: f32 = 1, unit: f32 = 
 
     max_val: u64
 
+    rect := Rect{
+        min = {0, 1 - 1.0/128.0},
+        max = {0 + 1.0/128.0, 1},
+    }
+
     counter := _state.counters[kind]
     for i in 0..<COUNTER_HISTORY {
         index := (int(counter.total_num) - i) %% COUNTER_HISTORY
@@ -4315,14 +4453,14 @@ draw_counter :: proc(kind: Counter_Kind, pos: Vec3, scale: f32 = 1, unit: f32 = 
 
         draw_sprite(
             pos = pos + {COUNTER_HISTORY - f32(i), height * 0.5, 0},
-            rect = {0, 1.0 / 128.0},
+            rect = rect,
             scale = {1, height},
             col = col,
         )
 
         draw_sprite(
             pos = pos + {COUNTER_HISTORY - f32(i), height * 0.5, 0.01},
-            rect = {0, 1.0 / 128.0},
+            rect = rect,
             scale = {3, height + 2},
             col = BLACK,
         )
@@ -4353,11 +4491,6 @@ draw_counter :: proc(kind: Counter_Kind, pos: Vec3, scale: f32 = 1, unit: f32 = 
 // Ensures the data user passed in is in somewhat reasonable state.
 //
 
-@(disabled = !VALIDATION)
-validate_f32 :: #force_inline proc(x: f32, loc := #caller_location) {
-    validate(x == x && (x * 0.5 != x || x == 0), "Value is NaN or Inf", loc = loc)
-}
-
 @(disabled=!VALIDATION)
 validate :: proc(cond: bool, msg := #caller_expression(cond), loc := #caller_location) {
     if !cond {
@@ -4378,6 +4511,11 @@ validate :: proc(cond: bool, msg := #caller_expression(cond), loc := #caller_loc
     }
 }
 
+
+@(disabled = !VALIDATION)
+validate_f32 :: #force_inline proc(x: f32, loc := #caller_location) {
+    validate(x == x && (x * 0.5 != x || x == 0), "Value is NaN or Inf", loc = loc)
+}
 
 @(disabled = !VALIDATION)
 validate_vec :: proc(v: [$N]f32, loc := #caller_location) {
@@ -4416,6 +4554,12 @@ validate_mat4 :: proc(m: Mat4, loc := #caller_location) {
     validate_vec(m[3], loc)
 }
 
+@(disabled = !VALIDATION)
+validate_draw_sort_key :: proc(key: Draw_Sort_Key) {
+    validate(key.texture != {} || key.texture_mode != .Non_Pooled)
+    validate(key.ps != {})
+    validate(key.vs != {})
+}
 
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////

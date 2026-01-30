@@ -5,6 +5,11 @@ import "vendor:wgpu"
 import "base:runtime"
 import "base:intrinsics"
 
+_ :: log
+_ :: wgpu
+_ :: runtime
+_ :: intrinsics
+
 when BACKEND == BACKEND_WGPU {
 
     _BIND_GROUP_CACHE_SIZE :: 512
@@ -429,7 +434,7 @@ when BACKEND == BACKEND_WGPU {
         }
 
         if true {
-            for item, i in layout_entries[:num_entries] {
+            for item, _ in layout_entries[:num_entries] {
                 kind: string = "???"
 
                 if item.buffer != {} {
@@ -442,7 +447,7 @@ when BACKEND == BACKEND_WGPU {
                     kind = "StorageTexture"
                 }
 
-                log.debugf("Layout item #%i: {} binding %i", i, kind, item.binding)
+                // log.debugf("Layout item #%i: {} binding %i", i, kind, item.binding)
             }
         }
 

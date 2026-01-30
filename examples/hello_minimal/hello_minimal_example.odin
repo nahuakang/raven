@@ -21,21 +21,8 @@ main :: proc() {
 
         rv.set_layer_params(0, rv.make_screen_camera())
 
-        rv.bind_texture("thick")
-
-        Foo :: struct {
-            a: string,
-            b: int,
-        }
-
-        foo: Foo = {
-            a = "hey",
-            b = 123,
-        }
-
-        txt := ufmt.tprintf("%v", foo)
-
-        rv.draw_text(txt,
+        rv.bind_texture(rv.get_texture("thick"))
+        rv.draw_text("Hello World!",
             rv.get_viewport() * {0.5, 0.5, 0} + {0, math.sin_f32(rv.get_time()) * 100, 0.01},
             anchor = 0.5,
             scale = 4,

@@ -8,7 +8,7 @@ VS_Out vs_main(uint vid : SV_VertexID, uint inst_id : SV_InstanceID) {
     float3x3 mat = float3x3(inst.mat_x, inst.mat_y, inst.mat_z);
 
     VS_Out o;
-    float3 world_pos = inst.pos + mul(mat, vert.pos);
+    float3 world_pos = inst.pos + mul(vert.pos, mat);
     o.pos = mul(view_proj, float4(world_pos, 1.0f));
     o.world_pos = world_pos;
     o.normal = unpack_unorm8(vert.normal).xyz; // * adjugate
