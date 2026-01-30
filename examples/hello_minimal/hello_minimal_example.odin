@@ -1,7 +1,6 @@
 package raven_example_hello_minimal
 
 import "core:math"
-import "../../ufmt"
 import rv "../.."
 
 main :: proc() {

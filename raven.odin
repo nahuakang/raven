@@ -2509,7 +2509,7 @@ decode_texture_data :: proc(data: []byte) -> (result: Texture_Data, ok: bool) {
     size: [2]i32
     channels: i32
 
-    stbi.set_flip_vertically_on_load(true)
+    stbi.set_flip_vertically_on_load(1)
 
     data := stbi.load_from_memory(
         buffer = raw_data(data),
