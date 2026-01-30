@@ -141,7 +141,15 @@ parse_header :: proc(p: ^Parser) -> (result: Header, err: Error) {
         return {}, .Error
     }
 
-    p.iter = p.iter[5:]
+    p.iter = p.iter[4:]
+
+    if p.iter[0] == '\r' {
+        p.iter = p.iter[1:]
+    }
+
+    if p.iter[0] == '\n' {
+        p.iter = p.iter[1:]
+    }
 
     result.version_major = -1
 
