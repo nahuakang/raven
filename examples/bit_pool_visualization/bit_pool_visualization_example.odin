@@ -158,8 +158,9 @@ _update :: proc(prev_state: ^State) -> ^State {
 
     rv.bind_sprite_scaling(.Pixel)
 
-    rv.draw_text("LMB to spawn particles", {10, 10, 0}, scale = 2)
-    rv.draw_text(fmt.tprintf("Mouse Pos: %v\nMouse Delta: %v", rv.mouse_pos(), rv.mouse_delta()), {10, 100, 0}, scale = 2)
+    screen := rv.get_viewport()
+    rv.draw_text("LMB to spawn particles", {10, screen.y - 10, 0}, scale = 2)
+    rv.draw_text(fmt.tprintf("Mouse Pos:   %v\nMouse Delta: %v", rv.mouse_pos(), rv.mouse_delta()), {10, screen.y - 50, 0}, scale = 2)
 
     rv.upload_gpu_layers()
     rv.render_gpu_layer(0, rv.DEFAULT_RENDER_TEXTURE, clear_color = rv.Vec3{0, 0, 0.5}, clear_depth = true)
