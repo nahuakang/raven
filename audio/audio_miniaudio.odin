@@ -48,11 +48,8 @@ when BACKEND == BACKEND_MINIAUDIO {
     }
 
     _shutdown :: proc() {
-        log.info("ma engine stop")
         ma.engine_stop(&_state.engine)
-        log.info("ma engine uninit")
         ma.engine_uninit(&_state.engine)
-        log.info("ma shutdown done")
     }
 
     _set_listener_transform :: proc(pos: [3]f32, forw: [3]f32, vel: [3]f32 = 0) {
@@ -181,14 +178,6 @@ when BACKEND == BACKEND_MINIAUDIO {
         ma.sound_uninit(&sound.sound)
     }
 
-    _start_sound :: proc(sound: ^Sound) {
-        ma.sound_start(&sound.sound)
-    }
-
-    _pause_sound :: proc(sound: ^Sound) {
-        ma.sound_stop(&sound.sound)
-    }
-
     _set_sound_volume :: proc(sound: ^Sound, factor: f32) {
         ma.sound_set_volume(&sound.sound, factor)
     }
@@ -219,15 +208,10 @@ when BACKEND == BACKEND_MINIAUDIO {
     }
 
     _set_sound_playing :: proc(sound: ^Sound, play: bool) {
-        playing := ma.sound_is_playing(&sound.sound)
-        if playing {
-            if !play {
-                ma.sound_stop(&sound.sound)
-            }
+        if play {
+            ma.sound_start(&sound.sound)
         } else {
-            if play {
-                ma.sound_start(&sound.sound)
-            }
+            ma.sound_stop(&sound.sound)
         }
     }
 

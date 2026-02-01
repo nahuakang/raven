@@ -819,6 +819,8 @@ init_context_state :: proc(ctx: ^Context_State) {
     }
 
     mem.tracking_allocator_init(&_state.context_state.tracking, context.allocator, context.allocator)
+
+    debug_trace.init(&_state.debug_trace_ctx)
 }
 
 // Create state, init context, init subsystems.
@@ -838,13 +840,18 @@ init_state :: proc(allocator := context.allocator) {
 
     context = get_context()
 
+    log.info("Raven context initialized")
+
+    log.info("Initializing platform...")
+
     platform.init(&_state.platform_state)
     platform.set_dpi_aware()
     _state.start_time = platform.get_time_ns()
 
+    log.info("Initializing audio...")
+
     audio.init(&_state.audio_state)
 
-    debug_trace.init(&_state.debug_trace_ctx)
 
     for &counter in _state.counters {
         counter.total_min = max(u64)
@@ -854,12 +861,16 @@ init_state :: proc(allocator := context.allocator) {
 
 // No-op if already initialized.
 init_window :: proc(name := "Raven App", style: platform.Window_Style = .Regular, allocator := context.allocator) {
+    log.infof("Creating window '%s'...", name)
+
     ensure(_state != nil)
     ensure(_state.window == {})
     assert(platform._state != nil)
     assert(audio._state != nil)
 
     _state.window = platform.create_window(name, style = style)
+
+    log.info("Initializing GPU...")
 
     gpu.init(&_state.gpu_state, platform.get_native_window_ptr(_state.window))
 
@@ -875,6 +886,8 @@ init_window :: proc(name := "Raven App", style: platform.Window_Style = .Regular
 }
 
 _finish_init :: proc() {
+    log.info("Finishing GPU Init...")
+
     assert(_state != nil)
 
     _state.screen_size = platform.get_window_frame_rect(_state.window).size
@@ -1011,14 +1024,12 @@ _finish_init :: proc() {
 }
 
 shutdown_state :: proc() {
-    log.info("shutdown...")
+    log.info("Shutting down Raven...")
     if _state == nil {
         return
     }
 
     _print_stats_report()
-
-    log.info("audio shutdown...")
 
     audio.shutdown()
     gpu.shutdown()
@@ -4396,32 +4407,36 @@ play_sound :: proc(
 
     log.infof("Playing sound %v", resource)
 
-    result = audio.create_sound(resource_handle = resource, group_handle = {}) or_return
+    result, ok = audio.create_sound(resource_handle = resource, group_handle = {})
+    if !ok {
+        log.error("Failed to play sound", resource)
+        return {}, false
+    }
 
-    // if delay > 0 {
-    //     audio.set_sound_start_delay(result, delay, .Seconds)
-    // }
+    if delay > 0 {
+        audio.set_sound_start_delay(result, delay, .Seconds)
+    }
 
     if start {
         audio.set_sound_playing(result, start)
     }
 
-    // if loop {
-    //     audio.set_sound_looping(result, loop)
-    // }
+    if loop {
+        audio.set_sound_looping(result, loop)
+    }
 
-    // if volume != 1 {
-    //     audio.set_sound_volume(result, volume)
-    // }
+    if volume != 1 {
+        audio.set_sound_volume(result, volume)
+    }
 
-    // if pitch != 1 {
-    //     audio.set_sound_pitch(result, pitch)
-    // }
+    if pitch != 1 {
+        audio.set_sound_pitch(result, pitch)
+    }
 
-    // if p, p_ok := pos.?; p_ok {
-    //     audio.set_sound_spatialization(result, true)
-    //     audio.set_sound_position(result, p)
-    // }
+    if p, p_ok := pos.?; p_ok {
+        audio.set_sound_spatialization(result, true)
+        audio.set_sound_position(result, p)
+    }
 
     return result, true
 }

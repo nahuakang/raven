@@ -4,7 +4,6 @@ package raven_audio
 import "../base"
 import "base:intrinsics"
 import "base:runtime"
-import "core:log"
 
 // TODO: sound fading
 // TODO: sound trim range for dynamically chopping big sounds
@@ -173,7 +172,7 @@ recycle_old_sounds :: proc() {
         }
 
         if _is_sound_finished(sound) {
-            log.warn("Recycling sound", handle)
+            // log.info("Recycling sound", handle)
             destr_ok := destroy_sound(handle)
             assert(destr_ok)
         }
@@ -228,7 +227,7 @@ create_sound :: proc(resource_handle: Resource_Handle, group_handle: Group_Handl
 
     result = {
         index = Handle_Index(index),
-        gen = _state.resources_gen[index],
+        gen = _state.sounds_gen[index],
     }
 
     base.bit_pool_set_1(&_state.sounds_used, index)
@@ -269,6 +268,8 @@ get_sound_time :: proc(handle: Sound_Handle, units: Units = .Seconds) -> f32 {
 set_sound_playing :: proc(handle: Sound_Handle, val: bool) {
     if sound, ok := get_internal_sound(handle); ok {
         _set_sound_playing(sound, val)
+    } else {
+        assert(false)
     }
 }
 
