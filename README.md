@@ -130,8 +130,6 @@ For more detailed information see the source code directly.
 
 ## Engine Structure
 - raven
-  - base - lightweight core utils with no dependencies, used by other packages
-  - build - tool for exporting builds and hot-reloading
   - platform - majority of OS specific code
     - win32
     - js
@@ -140,6 +138,8 @@ For more detailed information see the source code directly.
     - wgpu
   - audio
     - miniaudio
+- base - lightweight core utils with no dependencies, used by other packages
+- build - tool for exporting builds and hot-reloading
 
 ## Cheatsheet
 
@@ -206,4 +206,5 @@ oklerp(a, b: Vec4, t: f32) -> Vec4          // Interpolate colors with OKLAB
 
 # Contributing
 For info about bug reports and contributing, see [CONTRIBUTING](CONTRIBUTING.md)
+
 
