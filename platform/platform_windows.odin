@@ -635,9 +635,9 @@ when BACKEND == BACKEND_WINDOWS {
     _delete_file :: proc(path: string) -> (result: bool) {
         windows.SetLastError(0)
         result = bool(windows.DeleteFileW(windows.utf8_to_wstring_alloc(path, context.temp_allocator)))
-        if !result {
-            _win32_log_last_error("DeleteFileW")
-        }
+        // if !result {
+        //     _win32_log_last_error("DeleteFileW")
+        // }
         return result
     }
 

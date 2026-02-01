@@ -239,8 +239,8 @@ _extract_int :: proc(ptr: rawptr, size: int) -> u64 {
     switch size {
     case 1: return u64((cast(^u8)ptr)^)
     case 2: return u64((cast(^u16)ptr)^)
-    case 3: return u64((cast(^u32)ptr)^)
-    case 4: return (cast(^u64)ptr)^
+    case 4: return u64((cast(^u32)ptr)^)
+    case 8: return (cast(^u64)ptr)^
     }
     panic("Integer size not supported")
 }
@@ -407,12 +407,12 @@ _append_any :: proc(buf: ^[dynamic]byte, value: any, nested := false, pretty := 
                 append_elem_string(buf, ve.names[i - int(v.lower)])
 
             case runtime.Type_Info_Integer:
-                unimplemented()
+                _append_int(buf, int(v.lower) + i)
 
             case: panic("Invalid bit set backing type")
             }
 
-            if i + 1 < int(v.upper) {
+            if (val >> uint(bit_index + 1)) != 0 {
                 append_elem_string(buf, ", ")
             }
         }

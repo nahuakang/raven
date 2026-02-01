@@ -1,4 +1,4 @@
-#+vet explicit-allocators shadowing
+#+vet explicit-allocators shadowing unused style
 package raven
 
 import "core:mem"
@@ -18,7 +18,6 @@ import "gpu"
 import "platform"
 import "rscn"
 import "audio"
-import "base"
 import "base/ufmt"
 
 // TODO: go through all TODOs
@@ -30,6 +29,7 @@ import "base/ufmt"
 // TODO: consistent get_* and no get API!
 // TODO: font state
 // TODO: audio
+// TODO: try core:image
 // TODO: separate hash table size from backing array size?
 // TODO: abstract log_error and log_warn etc to comptime disable logging?
 // TODO: compress vertex and instance data more
@@ -37,6 +37,7 @@ import "base/ufmt"
 // TODO: uniform anchor values
 // TODO: drawing real lines, not quads
 // TODO: default module init/shutdown procs
+// TODO: load_* vs create_*, insert_* naming convention, and resource management naming in general
 
 // ARTICLES
 // - blog post about two level bit sets
@@ -61,6 +62,7 @@ MAX_RENDER_TEXTURES :: 64
 MAX_TEXTURE_RESOURCES :: 64
 MAX_SHADERS :: 64
 MAX_FILES :: 1024
+MAX_SOUNDS :: 1024
 
 MAX_TOTAL_SPRITE_INSTANCES :: 1024 * 32
 MAX_TOTAL_MESH_INSTANCES :: 1024 * 64
@@ -113,6 +115,9 @@ Spline_Handle :: distinct Handle
 Render_Texture_Handle :: distinct Handle
 Vertex_Shader_Handle :: distinct Handle
 Pixel_Shader_Handle :: distinct Handle
+Sound_Resource_Handle :: audio.Resource_Handle
+Sound_Handle :: audio.Sound_Handle
+
 
 Rect :: struct {
     min:    Vec2,
@@ -156,6 +161,7 @@ State :: struct #align(64) {
     frame_index:            u64,
     screen_size:            [2]i32,
     screen_dirty:           bool,
+    ended_frame:            bool,
     allocator:              runtime.Allocator,
     window:                 platform.Window,
     dpi_scale:              f32,
@@ -234,6 +240,12 @@ State :: struct #align(64) {
 
     files_hash:             [MAX_FILES]Hash,
     files:                  [MAX_FILES]File,
+
+    // NOTE: currently, sound resource handles are direct handles into the audio package.
+    // This means there is not necessarily an indirection, which simplifies things.
+    // The name tracking is only important for hotreloads and name lookups.
+    sound_resources_hash:   [MAX_SHADERS]Hash,
+    sound_resources:        [MAX_SHADERS]Sound_Resource_Handle,
 
     platform_state:         platform.State,
     gpu_state:              gpu.State,
@@ -566,6 +578,7 @@ DEFAULT_SAMPLERS :: [2]gpu.Sampler_Desc{
 
 
 
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // MARK: Base
 //
@@ -594,6 +607,8 @@ Init_Proc ::       #type proc() -> rawptr
 Shutdown_Proc ::   #type proc(rawptr)
 Update_Proc ::     #type proc(rawptr) -> rawptr
 
+// WARNING: this structure must match the one in build_hot.odin exactly,
+// since it's passed between DLLs when hot-reloading.
 Module_API :: struct {
     state_size: i64,
     init:       Init_Proc,
@@ -703,7 +718,9 @@ when ODIN_OS == .JS {
             return false
         }
 
-        end_frame()
+        if !_state.ended_frame {
+            end_frame()
+        }
 
         return true
     }
@@ -766,7 +783,9 @@ when ODIN_OS == .JS {
             return nil
         }
 
-        end_frame()
+        if !_state.ended_frame {
+            end_frame()
+        }
 
         return _state
     }
@@ -800,6 +819,8 @@ init_context_state :: proc(ctx: ^Context_State) {
     }
 
     mem.tracking_allocator_init(&_state.context_state.tracking, context.allocator, context.allocator)
+
+    debug_trace.init(&_state.debug_trace_ctx)
 }
 
 // Create state, init context, init subsystems.
@@ -819,13 +840,18 @@ init_state :: proc(allocator := context.allocator) {
 
     context = get_context()
 
+    log.info("Raven context initialized")
+
+    log.info("Initializing platform...")
+
     platform.init(&_state.platform_state)
     platform.set_dpi_aware()
     _state.start_time = platform.get_time_ns()
 
+    log.info("Initializing audio...")
+
     audio.init(&_state.audio_state)
 
-    debug_trace.init(&_state.debug_trace_ctx)
 
     for &counter in _state.counters {
         counter.total_min = max(u64)
@@ -835,12 +861,16 @@ init_state :: proc(allocator := context.allocator) {
 
 // No-op if already initialized.
 init_window :: proc(name := "Raven App", style: platform.Window_Style = .Regular, allocator := context.allocator) {
+    log.infof("Creating window '%s'...", name)
+
     ensure(_state != nil)
     ensure(_state.window == {})
     assert(platform._state != nil)
     assert(audio._state != nil)
 
     _state.window = platform.create_window(name, style = style)
+
+    log.info("Initializing GPU...")
 
     gpu.init(&_state.gpu_state, platform.get_native_window_ptr(_state.window))
 
@@ -856,6 +886,8 @@ init_window :: proc(name := "Raven App", style: platform.Window_Style = .Regular
 }
 
 _finish_init :: proc() {
+    log.info("Finishing GPU Init...")
+
     assert(_state != nil)
 
     _state.screen_size = platform.get_window_frame_rect(_state.window).size
@@ -992,6 +1024,7 @@ _finish_init :: proc() {
 }
 
 shutdown_state :: proc() {
+    log.info("Shutting down Raven...")
     if _state == nil {
         return
     }
@@ -1042,7 +1075,7 @@ _print_stats_report :: proc() {
 
         if len(tr.allocation_map) > 0 {
             fmt.printfln("Memory Leaks:")
-            for addr, it in tr.allocation_map {
+            for _, it in tr.allocation_map {
                 fmt.printfln("\t[{0}:{1}:{2}:{3}] Leaked {4:p} of size {5:M} ({5} bytes) with alignment {6:M}",
                     it.location.file_path,
                     it.location.procedure,
@@ -1085,6 +1118,8 @@ begin_frame :: proc() -> (keep_running: bool) {
     free_all(context.temp_allocator)
     // In case big file allocations happened...
     defer free_all(context.temp_allocator)
+
+    _state.ended_frame = false
 
     prev_screen_size := _state.screen_size
     screen := platform.get_window_frame_rect(_state.window).size
@@ -1299,7 +1334,9 @@ begin_frame :: proc() -> (keep_running: bool) {
 }
 
 end_frame :: proc(vsync := true) {
+    validate(!_state.ended_frame)
 
+    _state.ended_frame = true
     curr_time := platform.get_time_ns()
 
     frame_work_dur_ns := curr_time - _state.last_time
@@ -2584,7 +2621,8 @@ create_pixel_shader :: proc(name: string, data: []byte) -> (result: Pixel_Shader
 
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// MARK: Files
+// MARK: VFS
+// Virtual file system
 //
 
 // Registers all files.
@@ -2679,7 +2717,7 @@ load_asset :: proc(name: string, dst_group: Group_Handle) -> bool {
         _, ok := create_texture_from_encoded_data(name[:len(name) - 4], data)
         return ok
     } else if strings.has_suffix(name, ".rscn") {
-        group_handle, ok := load_scene(name, dst_group = dst_group)
+        _, ok := load_scene(name, dst_group = dst_group)
         return ok
     }
     // TODO
@@ -3060,8 +3098,6 @@ draw_sprite :: proc(
         linalg.quaternion_angle_axis_f32(angle, {0, 0, 1}))
 
     rect_size := rect_full_size(rect)
-
-    draw: Sprite_Draw
 
     size := Vec2{
         scale.x * 0.5,
@@ -4315,6 +4351,97 @@ screen_to_world_ray :: proc(pos: Vec2, cam: Camera) -> Vec3 {
 
 
 
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// MARK: Sounds
+//
+
+load_sound_resource :: proc(path: string) -> (result: Sound_Resource_Handle, ok: bool) #optional_ok {
+    name := strip_path_name(path)
+    // TODO: register the resource internally for hot-reload
+    data, data_ok := get_file_by_name(path)
+    if !data_ok {
+        log.error("Failed to load sound resource '%s' from '%s', VFS file not found", name, path)
+    }
+
+    return create_sound_resource_encoded(name, data)
+}
+
+create_sound_resource_encoded :: proc(name: string, data: []byte) -> (result: Sound_Resource_Handle, ok: bool) #optional_ok {
+    log.infof("Creating sound resource '%s' with size %i bytes", name, len(data))
+
+    res := audio.create_resource_encoded(data) or_return
+
+    if !insert_sound_resource_by_hash(name, res) {
+        // NOTE: currently this can continue running somewhat correctly, the result is valid.
+        // But the resource won't be tracked properly internally.
+        log.error("Failed to insert named sound resource '%s'")
+    }
+
+    return res, true
+}
+
+get_sound_resource :: proc(name: string) -> (result: Sound_Resource_Handle, ok: bool) #optional_ok {
+    hash := hash_name(name)
+    index := _table_lookup_hash(&_state.meshes_hash, hash) or_return
+    return _state.sound_resources[index], true
+}
+
+@(require_results)
+insert_sound_resource_by_hash :: proc(name: string, handle: Sound_Resource_Handle) -> bool {
+    hash := hash_name(name)
+    index, _ := _table_insert_hash(&_state.sound_resources_hash, hash) or_return
+    _state.sound_resources[index] = handle
+    return true
+}
+
+play_sound :: proc(
+    resource:       Sound_Resource_Handle,
+    start           := true,
+    loop            := false,
+    delay:          f32 = 0,
+    volume:         f32 = 1,
+    pitch:          f32 = 1,
+    pos:            Maybe([3]f32) = nil,
+) -> (result: audio.Sound_Handle, ok: bool) #optional_ok {
+    validate(resource != {})
+
+    log.infof("Playing sound %v", resource)
+
+    result, ok = audio.create_sound(resource_handle = resource, group_handle = {})
+    if !ok {
+        log.error("Failed to play sound", resource)
+        return {}, false
+    }
+
+    if delay > 0 {
+        audio.set_sound_start_delay(result, delay, .Seconds)
+    }
+
+    if start {
+        audio.set_sound_playing(result, start)
+    }
+
+    if loop {
+        audio.set_sound_looping(result, loop)
+    }
+
+    if volume != 1 {
+        audio.set_sound_volume(result, volume)
+    }
+
+    if pitch != 1 {
+        audio.set_sound_pitch(result, pitch)
+    }
+
+    if p, p_ok := pos.?; p_ok {
+        audio.set_sound_spatialization(result, true)
+        audio.set_sound_position(result, p)
+    }
+
+    return result, true
+}
+
+
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // MARK: Misc
@@ -4334,6 +4461,17 @@ log_internal :: proc(format: string, args: ..any, loc := #caller_location) {
     when LOG_INTERNAL {
         log.debugf(format, args = args, location = loc)
     }
+}
+
+// Convert VFS path to an asset name, for example:
+// foo/bar/something.bin -> something
+// foo.data.txt -> foo
+strip_path_name :: proc "contextless" (str: string) -> (result: string) {
+    back_index := strings.last_index_byte(str,'\\')
+    forw_index := strings.last_index_byte(str,'/')
+    result = str[max(back_index, forw_index) + 1:]
+    dot_index := strings.index_byte(result, '.')
+    return result[:dot_index]
 }
 
 _assertion_failure_proc :: proc(prefix, message: string, loc: runtime.Source_Code_Location) -> ! {

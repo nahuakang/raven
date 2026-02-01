@@ -2,7 +2,7 @@ package raven_example_hello
 
 import "core:log"
 import rv "../.."
-import "../../gpu"
+import "../../base"
 import "core:math/rand"
 import "core:math/linalg"
 import "core:fmt"
@@ -11,7 +11,7 @@ state: ^State
 
 State :: struct {
     // Using the GPU bit pool. A datastructure package for users might get added later.
-    pool:   gpu.Bit_Pool(4096),
+    pool:   base.Bit_Pool(4096),
     parts:  [4096]Particle,
 }
 
@@ -79,9 +79,9 @@ _update :: proc(prev_state: ^State) -> ^State {
                 timer = rand.float32_range(2, 4),
             }
 
-            index, index_ok := gpu.bit_pool_find_0(state.pool)
+            index, index_ok := base.bit_pool_find_0(state.pool)
             if index_ok {
-                gpu.bit_pool_set_1(&state.pool, index)
+                base.bit_pool_set_1(&state.pool, index)
                 state.parts[index] = p
             } else {
                 log.error("Pool full!")
@@ -91,12 +91,12 @@ _update :: proc(prev_state: ^State) -> ^State {
 
 
     for &p, index in state.parts {
-        if !gpu.bit_pool_check_1(state.pool, index) {
+        if !base.bit_pool_check_1(state.pool, index) {
             continue
         }
 
         if p.timer < 0 {
-            gpu.bit_pool_set_0(&state.pool, index)
+            base.bit_pool_set_0(&state.pool, index)
             continue
         }
 
@@ -123,22 +123,22 @@ _update :: proc(prev_state: ^State) -> ^State {
         }
 
         base_pos := rv.Vec3{
-            64 + f32(i % 8) * (64 + 4),
-            64 + f32(i / 8) * (64 + 4),
+            64 + f32(i % 8) * (32 + 4),
+            64 + f32(i / 8) * (32 + 4),
             0.1,
         }
 
         rv.draw_sprite(
             base_pos,
             solid,
-            scale = {64, 64},
+            scale = {32, 32},
             col = block_full ? rv.RED : rv.BLACK,
         )
 
         for i_local in 0..<64 {
             local_pos := base_pos + rv.Vec3{
-                f32(i_local % 8) * 8 - 32,
-                f32(i_local / 8) * 8 - 32,
+                f32(i_local % 8) * 4 - 14,
+                f32(i_local / 8) * 4 - 14,
                 -0.05,
             }
 
@@ -148,7 +148,7 @@ _update :: proc(prev_state: ^State) -> ^State {
                 rv.draw_sprite(
                     local_pos,
                     solid,
-                    scale = {3, 3},
+                    scale = {2, 2},
                 )
             }
 
@@ -159,7 +159,6 @@ _update :: proc(prev_state: ^State) -> ^State {
     rv.bind_sprite_scaling(.Pixel)
 
     rv.draw_text("LMB to spawn particles", {10, 10, 0}, scale = 2)
-    rv.draw_text(fmt.tprintf("Mouse Pos: %v\nMouse Delta: %v", rv.mouse_pos(), rv.mouse_delta()), {10, 100, 0}, scale = 2)
 
     rv.upload_gpu_layers()
     rv.render_gpu_layer(0, rv.DEFAULT_RENDER_TEXTURE, clear_color = rv.Vec3{0, 0, 0.5}, clear_depth = true)
