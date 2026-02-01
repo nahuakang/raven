@@ -1362,6 +1362,8 @@ when BACKEND == BACKEND_D3D11 {
             log.errorf("GPU D3D11: DXGI_ERROR_INVALID_CALL: The method call is invalid. For example, a method's parameter may not be a valid pointer.", location = loc)
         case 0x887A000A:
             log.errorf("GPU D3D11: DXGI_ERROR_WAS_STILL_DRAWING: The previous blit operation that is transferring information to or from this surface is incomplete.", location = loc)
+        case 0x887A002D:
+            log.errorf("GPU D3D11: DXGI_ERROR_SDK_COMPONENT_MISSING: An SDK component is missing or mismatched.", location = loc)
         case 0x80004005:
             log.errorf("GPU D3D11: E_FAIL: Attempted to create a device with the debug layer enabled and the layer is not installed.", location = loc)
         case 0x80070057:
