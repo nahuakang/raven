@@ -34,3 +34,4 @@ jobs:
           .\Odin\odin build examples/simple_3d
           .\Odin\odin build examples/fps
           .\Odin\odin build examples/snake_planet
+          .\Odin\odin build examples/platform_d3d11

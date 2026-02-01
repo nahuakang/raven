@@ -314,12 +314,18 @@ draw_gamepad :: proc(
     draw_circle(pos, 5, {0.5, 0.1})
 
     draw_circle(pos + {+50, 20}, 25, {0, 0.5})
-    draw_circle(pos + {+50, 20} + gp.right_thumb * 15 * {1, -1}, 15, {0.8, 1})
+    draw_circle(pos + {+50, 20} + {
+        gp.axes[.Right_Thumb_X],
+        gp.axes[.Right_Thumb_Y],
+        } * 15 * {1, -1}, 15, {0.8, 1})
     draw_circle(pos + {-70,-10}, 25, {0, 0.5})
-    draw_circle(pos + {-70,-10} + gp.left_thumb * 15 * {1, -1}, 15, {0.8, 1})
+    draw_circle(pos + {-70,-10} + {
+        gp.axes[.Left_Thumb_X],
+        gp.axes[.Left_Thumb_Y],
+        } * 15 * {1, -1}, 15, {0.8, 1})
 
-    draw_circle(pos + { 75, -80}, {10, 10 + 10 * gp.right_trigger}, col = {0.8 * gp.right_trigger, 1})
-    draw_circle(pos + {-75, -80}, {10, 10 + 10 * gp.left_trigger}, col = {0.8 * gp.left_trigger, 1})
+    draw_circle(pos + { 75, -80}, {10, 10 + 10 * gp.axes[.Right_Trigger]}, col = {0.8 * gp.axes[.Right_Trigger], 1})
+    draw_circle(pos + {-75, -80}, {10, 10 + 10 * gp.axes[.Left_Trigger]}, col = {0.8 * gp.axes[.Left_Trigger], 1})
 
     draw_circle(pos + { 75, -50}, {20, 10}, col = .Right_Shoulder in gp.buttons ? 1 : 0.6)
     draw_circle(pos + {-75, -50}, {20, 10}, col = .Left_Shoulder in gp.buttons ? 1 : 0.6)
