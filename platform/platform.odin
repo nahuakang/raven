@@ -385,6 +385,10 @@ get_time_sec :: proc() -> f32 {
     return f32(f64(get_time_ns()) * 1e-9)
 }
 
+register_default_exception_handler :: proc() {
+    _register_default_exception_handler()
+}
+
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // MARK: Thread

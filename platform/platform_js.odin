@@ -77,6 +77,10 @@ _exit_process :: proc(code: int) -> ! {
     js.trap()
 }
 
+_register_default_exception_handler :: proc() {
+
+}
+
 @(require_results)
 _memory_protect :: proc(ptr: rawptr, num_bytes: int, protect: Memory_Protection) -> bool {
     return true

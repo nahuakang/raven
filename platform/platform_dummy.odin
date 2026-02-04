@@ -30,6 +30,7 @@ when BACKEND == BACKEND_DUMMY {
     @(require_results) _get_commandline_args :: proc(allocator := context.allocator) -> []string { dummy() }
     @(require_results) _run_shell_command :: proc(command: string) -> int { dummy() }
     _exit_process :: proc(code: int) -> ! { dummy() }
+    _register_default_exception_handler :: proc() {}
 
     @(require_results) _memory_protect :: proc(ptr: rawptr, num_bytes: int, protect: Memory_Protection) -> bool { dummy() }
     @(require_results) _clipboard_set :: proc(data: []byte, format: Clipboard_Format = .Text) -> bool { dummy() }

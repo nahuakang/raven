@@ -103,6 +103,89 @@ when BACKEND == BACKEND_WINDOWS {
         windows.ExitProcess(windows.DWORD(code))
     }
 
+    _register_default_exception_handler :: proc() {
+        windows.AddVectoredExceptionHandler(1, _win32_vectored_exception_handler)
+    }
+
+    _win32_vectored_exception_handler :: proc "system" (ptrs: ^windows.EXCEPTION_POINTERS) -> windows.LONG {
+        // Filter non-errors
+        if ptrs.ExceptionRecord.ExceptionCode < 0xC0000000 {
+            return windows.EXCEPTION_CONTINUE_SEARCH
+        }
+
+        kind: string
+        info: string
+
+        // https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-exception_record
+        switch ptrs.ExceptionRecord.ExceptionCode {
+        case windows.EXCEPTION_ACCESS_VIOLATION:
+            kind = "ACCESS_VIOLATION"
+            info = "The thread tried to read from or write to a virtual address for which it does not have the appropriate access."
+        case windows.EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
+            kind = "ARRAY_BOUNDS_EXCEEDED"
+            info = "The thread tried to access an array element that is out of bounds and the underlying hardware supports bounds checking."
+        case windows.EXCEPTION_FLT_DENORMAL_OPERAND:
+            kind = "FLT_DENORMAL_OPERAND"
+            info = "One of the operands in a floating-point operation is denormal. A denormal value is one that is too small to represent as a standard floating-point value."
+        case windows.EXCEPTION_FLT_DIVIDE_BY_ZERO:
+            kind = "FLT_DIVIDE_BY_ZERO"
+            info = "The thread tried to divide a floating-point value by a floating-point divisor of zero."
+        case windows.EXCEPTION_FLT_INEXACT_RESULT:
+            kind = "FLT_INEXACT_RESULT"
+            info = "The result of a floating-point operation cannot be represented exactly as a decimal fraction."
+        case windows.EXCEPTION_FLT_INVALID_OPERATION:
+            kind = "FLT_INVALID_OPERATION"
+            info = "This exception represents any floating-point exception not included in this list."
+        case windows.EXCEPTION_FLT_OVERFLOW:
+            kind = "FLT_OVERFLOW"
+            info = "The exponent of a floating-point operation is greater than the magnitude allowed by the corresponding type."
+        case windows.EXCEPTION_FLT_STACK_CHECK:
+            kind = "FLT_STACK_CHECK"
+            info = "The stack overflowed or underflowed as the result of a floating-point operation."
+        case windows.EXCEPTION_FLT_UNDERFLOW:
+            kind = "FLT_UNDERFLOW"
+            info = "The exponent of a floating-point operation is less than the magnitude allowed by the corresponding type."
+        case windows.EXCEPTION_ILLEGAL_INSTRUCTION:
+            kind = "ILLEGAL_INSTRUCTION"
+            info = "The thread tried to execute an invalid instruction."
+        case windows.EXCEPTION_IN_PAGE_ERROR:
+            kind = "IN_PAGE_ERROR"
+            info = "The thread tried to access a page that was not present, and the system was unable to load the page. For example, this exception might occur if a network connection is lost while running a program over the network."
+        case windows.EXCEPTION_INT_DIVIDE_BY_ZERO:
+            kind = "INT_DIVIDE_BY_ZERO"
+            info = "The thread tried to divide an integer value by an integer divisor of zero."
+        case windows.EXCEPTION_INT_OVERFLOW:
+            kind = "INT_OVERFLOW"
+            info = "The result of an integer operation caused a carry out of the most significant bit of the result."
+        case windows.EXCEPTION_INVALID_DISPOSITION:
+            kind = "INVALID_DISPOSITION"
+            info = "An exception handler returned an invalid disposition to the exception dispatcher. Programmers using a high-level language such as C should never encounter this exception."
+        case windows.EXCEPTION_NONCONTINUABLE_EXCEPTION:
+            kind = "NONCONTINUABLE_EXCEPTION"
+            info = "The thread tried to continue execution after a noncontinuable exception occurred."
+        case windows.EXCEPTION_PRIV_INSTRUCTION:
+            kind = "PRIV_INSTRUCTION"
+            info = "The thread tried to execute an instruction whose operation is not allowed in the current machine mode."
+        case windows.EXCEPTION_STACK_OVERFLOW:
+            kind = "STACK_OVERFLOW"
+            info = "The thread used up its stack."
+
+        case:
+            runtime.print_string("Unknown exception:\n")
+            runtime.print_u64(u64(ptrs.ExceptionRecord.ExceptionCode))
+            runtime.print_string("\n")
+            return windows.EXCEPTION_CONTINUE_SEARCH
+        }
+
+        runtime.print_string(kind)
+        runtime.print_string(" Exception at ")
+        runtime.print_uintptr(uintptr(ptrs.ExceptionRecord.ExceptionAddress))
+        runtime.print_string(":\n")
+        runtime.print_string(info)
+
+        return windows.EXCEPTION_CONTINUE_SEARCH
+    }
+
     _get_user_data_dir :: proc(allocator := context.allocator) -> string {
         S_OK :: 0
         path: windows.LPWSTR

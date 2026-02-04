@@ -38,11 +38,7 @@ import "base/ufmt"
 // TODO: drawing real lines, not quads
 // TODO: default module init/shutdown procs
 // TODO: load_* vs create_*, insert_* naming convention, and resource management naming in general
-
-// ARTICLES
-// - blog post about two level bit sets
-// - open/container-less datastructures as building blocks
-// - MM style functional timestep
+// TODO: DXT texture compression
 
 RELEASE :: #config(RAVEN_RELEASE, false)
 VALIDATION :: #config(RAVEN_VALIDATION, !RELEASE)
@@ -845,13 +841,15 @@ init_state :: proc(allocator := context.allocator) {
     log.info("Initializing platform...")
 
     platform.init(&_state.platform_state)
+
+    platform.register_default_exception_handler()
+
     _state.start_time = platform.get_time_ns()
     platform.set_dpi_aware()
 
     log.info("Initializing audio...")
 
     audio.init(&_state.audio_state)
-
 
     for &counter in _state.counters {
         counter.total_min = max(u64)
