@@ -9,6 +9,9 @@ import "../../platform"
 import "../../base/ufmt"
 import "../../audio"
 
+SNAKE_RED :: rv.Vec4{1, 0.3, 0, 1}
+SNAKE_ORANGE :: rv.ORANGE
+
 state: ^State
 
 State :: struct {
@@ -291,7 +294,7 @@ _update :: proc(prev_state: ^State) -> ^State {
         for seg, i in snake.segments[:snake.num_segments] {
             rv.draw_mesh_by_handle(sph,
                 seg.pos * (1.0 + 0.025 * rv.nsin(f32(i) * 0.21 - rv.get_time())),
-                scale = 0.15, col = i % 2 == 0 ? {1, 0.3, 0, 1} : rv.ORANGE)
+                scale = 0.15, col = i % 2 == 0 ? SNAKE_RED : SNAKE_ORANGE)
         }
 
         for obst in state.obsts[:state.num_obsts] {
@@ -336,13 +339,19 @@ _update :: proc(prev_state: ^State) -> ^State {
 
     case .Menu:
 
-        rv.draw_text("SNAKE PLANET",
-            {screen.x * 0.5, screen.y * 0.5 + math.sin_f32(rv.get_time() * 2) * 10, 0},
+        char_sprites := rv.draw_text("SNAKE PLANET",
+            {screen.x * 0.5, screen.y * 0.5 + math.sin_f32(rv.get_time() * 2) * 4, 0},
             anchor = 0.5,
             scale = 4,
-            rot = rv.quat_angle_axis(math.sin_f32(rv.get_time() * 0.5) * 0.05, {0, 0, 1}),
-            col = rv.ORANGE,
+            col = SNAKE_ORANGE,
         )
+
+        for &inst, i in char_sprites {
+            inst.pos.y += math.sin_f32(f32(i) * 0.7334 + rv.get_time()) * 10
+            if i % 2 == 0 {
+                inst.color = rv.pack_unorm8(SNAKE_RED)
+            }
+        }
 
         rv.draw_text("Press SPACE to play", {screen.x * 0.5, screen.y * 0.35, 0.1}, anchor = 0.5, scale = 2, col = rv.LIGHT_GRAY)
         rv.draw_text(ufmt.tprintf("HIGHSCORE %i", state.max_score), {screen.x * 0.5, screen.y * 0.25, 0.1}, anchor = 0.5, scale = 2)

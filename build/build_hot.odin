@@ -163,7 +163,7 @@ hotreload_run :: proc(pkg: string, pkg_path: string) -> bool {
 
         changes := platform.watch_file_changes(&watcher)
         for change in changes {
-            log.info("Hotreload: file changed:", change)
+            // log.info("Hotreload: file changed:", change)
             if strings.ends_with(change, ".odin") {
                 any_changes = true
             }
@@ -183,7 +183,6 @@ hotreload_run :: proc(pkg: string, pkg_path: string) -> bool {
         if !new_ok {
             continue
         }
-
 
         if new_file.index > curr_index {
             // NOTE: this is expected to fail a few times while the module is compiling.

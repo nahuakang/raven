@@ -396,7 +396,6 @@ Bind_State :: struct {
     texture_size:           [2]u16, // cached
     pixel_shader:           u8,
     vertex_shader:          u8,
-    sprite_scaling:         Sprite_Scaling,
 }
 
 Bind_Texture_Mode :: enum u8 {
@@ -2929,10 +2928,6 @@ bind_fill :: proc(fill: Fill_Mode) {
     _state.bind_state.fill = fill
 }
 
-bind_sprite_scaling :: proc(scaling: Sprite_Scaling) {
-    _state.bind_state.sprite_scaling = scaling
-}
-
 bind_depth_write :: proc(write: bool) {
     _state.bind_state.depth_write = write
 }
@@ -3073,13 +3068,14 @@ set_layer_params :: proc(
 //
 
 draw_sprite :: proc(
-    pos:    Vec3,
-    rect:   Rect = {0, 1},
-    scale:  Vec2 = 1,
-    col:    Vec4 = 1,
-    rot:    Quat = 1,
-    anchor: Vec2 = 0,
-    angle:  f32 = 0,
+    pos:        Vec3,
+    rect:       Rect = {0, 1},
+    scale:      Vec2 = 1,
+    col:        Vec4 = 1,
+    rot:        Quat = 1,
+    anchor:     Vec2 = 0,
+    angle:      f32 = 0,
+    scaling:    Sprite_Scaling = .Pixel,
 ) {
     validate_vec(pos)
     validate_vec(scale)
@@ -3101,7 +3097,7 @@ draw_sprite :: proc(
         scale.y * 0.5,
     }
 
-    switch _state.bind_state.sprite_scaling {
+    switch scaling {
     case .Pixel:
         size *= {
             f32(_state.bind_state.texture_size.x) * rect_size.x,
@@ -3128,12 +3124,7 @@ draw_sprite :: proc(
         uv_min_x = rect.min.x + rect_size_sign.x * UV_EPS,
         uv_min_y = rect.min.y + rect_size_sign.y * UV_EPS,
         uv_size = rect_size - rect_size_sign * UV_EPS * 2,
-        color = {
-            u8(clamp(col.r * 255, 0, 255)),
-            u8(clamp(col.g * 255, 0, 255)),
-            u8(clamp(col.b * 255, 0, 255)),
-            u8(clamp(col.a * 255, 0, 255)),
-        },
+        color = pack_unorm8(col),
         tex_slice = _state.bind_state.texture_slice,
     }
 
@@ -3163,18 +3154,9 @@ draw_sprite_inst :: proc(inst: Sprite_Inst) {
 }
 
 
-Draw_Text_Iter :: struct {
-    // TODO
-}
 
-draw_text_iter :: proc() {
-
-}
-
-draw_text_next :: proc() -> (ok: bool) {
-    return false
-}
-
+// Returns a slice of the GPU sprite instances.
+// TODO: real text draw iterator?
 draw_text :: proc(
     text:       string, // UTF-8
     pos:        [3]f32,
@@ -3183,7 +3165,7 @@ draw_text :: proc(
     spacing:    Vec2 = 0, // x = character spacing, y = line spacing
     col:        Vec4 = 1,
     rot:        Quat = 1,
-) {
+) -> []Sprite_Inst {
     char_size := IVec2{
         i32(_state.bind_state.texture_size.x) / 16,
         i32(_state.bind_state.texture_size.y) / 16,
@@ -3201,6 +3183,9 @@ draw_text :: proc(
     center := pos - (mat[0] * full_size.x * anchor.x + mat[1] * full_size.y * anchor.y)
 
     offs: Vec2
+
+    draw_layer := &_state.draw_layers[_state.bind_state.draw_layer]
+    start_offs := len(draw_layer.sprites)
 
     for r in text {
         if rune_is_drawable(r) {
@@ -3222,6 +3207,8 @@ draw_text :: proc(
 
         offs = text_glyph_apply(offs, r, scale = scale, char_size = char_size, spacing = spacing)
     }
+
+    return draw_layer.sprites.inst[:len(draw_layer.sprites)][start_offs:]
 }
 
 rune_is_drawable :: proc(r: rune) -> bool {
